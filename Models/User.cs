@@ -1,3 +1,6 @@
+using Cuzdan360Backend.Models.Finance; // 👈 1. EKLENDİ
+using System.Collections.Generic;      // 👈 2. EKLENDİ (ICollection için)
+
 namespace Cuzdan360Backend.Models;
 
 public class User
@@ -30,4 +33,9 @@ public class User
     public DateTime? LastLoginDate { get; set; }
     public DateTime? LastProfileUpdateDate { get; set; }
     public bool IsOtpEnabled { get; set; }
+
+    // === 3. EKLENDİ ===
+    // Navigation Property (One-to-Many)
+    public ICollection<Transaction> Transactions { get; set; } = new List<Transaction>();
+    // === EKLENTİ SONU ===
 }

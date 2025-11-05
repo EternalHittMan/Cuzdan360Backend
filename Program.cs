@@ -53,6 +53,7 @@ builder.Services.AddSwaggerGen(SwaggerConfiguration.Configure);
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<ITransactionRepository, TransactionRepository>(); // 👈 BU SATIRI EKLEYİN
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<EmailService>();
 
