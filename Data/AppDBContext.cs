@@ -8,11 +8,13 @@ public class AppDbContext : DbContext
 {
     public DbSet<User> Users { get; set; }
 
+    // === EKSİK KISIM (BURAYA EKLENDİ) ===
     // Finance tables
     public DbSet<AssetType> AssetTypes { get; set; }
     public DbSet<Category> Categories { get; set; }
     public DbSet<Source> Sources { get; set; }
     public DbSet<Transaction> Transactions { get; set; }
+    // === EKLENTİ SONU ===
 
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
@@ -29,12 +31,14 @@ public class AppDbContext : DbContext
             {
                 Id = 1, Username = "admin",
                 PasswordHash = "$2a$12$vDN5rfJgTGOrCvJ0354EueBJhTkQOt3cWqCnInML7TKC9qbDv/cYK",
-                Email = "admin@example.com"
+                Email = "admin@example.com",
+                Balance = 0, // 👈 Modelinize göre eksik olabilir, ekledim.
+                Permission = 1, // 👈 Admin için 1 varsayıyorum.
+                IsEmailVerified = true // 👈 Admin'i doğrulanmış yapalım.
             }
         );
 
-        // === 4. YENİ EKLENEN HAZIR VERİLER ===
-
+        // === EKSİK KISIM (BURAYA EKLENDİ) ===
         // Varlık Tipleri (AssetType) için hazır veriler
         modelBuilder.Entity<AssetType>().HasData(
             new AssetType { AssetTypeId = 1, Name = "Türk Lirası", Code = "TRY" },
@@ -56,59 +60,46 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Category>().HasData(
             // --- Gelir Kategorileri ---
             new Category { CategoryId = 1, Name = "Maaş" },
-            new Category { CategoryId = 2, Name = "Ek Gelir (Freelance)" },
+            new Category { CategoryId = 2, Name = "Ek Gelir" },
             new Category { CategoryId = 3, Name = "Kira Geliri" },
-            new Category { CategoryId = 4, Name = "Satış Geliri" },
             new Category { CategoryId = 5, Name = "Diğer Gelirler" },
-            new Category { CategoryId = 6, Name = "Hediye / Burs" },
             
             // --- Gider Kategorileri ---
             new Category { CategoryId = 10, Name = "Market & Gıda" },
-            new Category { CategoryId = 11, Name = "Faturalar (Elektrik, Su, İnternet)" },
-            new Category { CategoryId = 12, Name = "Ulaşım (Yakıt, Toplu Taşıma)" },
-            new Category { CategoryId = 13, Name = "Kira / Konut Kredisi" },
-            new Category { CategoryId = 14, Name = "Restoran & Dışarıda Yemek" },
-            new Category { CategoryId = 15, Name = "Giyim & Alışveriş" },
-            new Category { CategoryId = 16, Name = "Eğlence & Sosyal (Sinema, Konser)" },
-            new Category { CategoryId = 17, Name = "Sağlık & Kişisel Bakım" },
-            new Category { CategoryId = 18, Name = "Eğitim" },
-            new Category { CategoryId = 19, Name = "Ev Eşyası & Dekorasyon" },
-            new Category { CategoryId = 20, Name = "Tatil" },
-            new Category { CategoryId = 21, Name = "Borç / Kredi Ödemesi" },
+            new Category { CategoryId = 11, Name = "Faturalar" },
+            new Category { CategoryId = 12, Name = "Ulaşım" },
+            new Category { CategoryId = 13, Name = "Kira" },
+            new Category { CategoryId = 14, Name = "Restoran" },
+            new Category { CategoryId = 15, Name = "Alışveriş" },
+            new Category { CategoryId = 16, Name = "Eğlence" },
+            new Category { CategoryId = 17, Name = "Sağlık" },
             new Category { CategoryId = 22, Name = "Diğer Giderler" }
         );
-        // === HAZIR VERİ SONU ===
-
-
+        
         // === Transaction ilişkileri ===
-        // (Bu kısım sizinkiyle aynı, değişmedi)
-
-        // Transaction → User (1 kullanıcı, birçok işlem)
         modelBuilder.Entity<Transaction>()
             .HasOne(t => t.User)
-            .WithMany(u => u.Transactions) // 👈 User.cs'i güncellediğimiz için burayı da güncelledim
+            .WithMany(u => u.Transactions) // 👈 User.cs'e Transactions eklediğimizi varsayarak
             .HasForeignKey(t => t.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // Transaction → AssetType (1 varlık tipi, birçok işlem)
         modelBuilder.Entity<Transaction>()
             .HasOne(t => t.AssetType)
             .WithMany(a => a.Transactions)
             .HasForeignKey(t => t.AssetTypeId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Transaction → Category (1 kategori, birçok işlem)
         modelBuilder.Entity<Transaction>()
             .HasOne(t => t.Category)
             .WithMany(c => c.Transactions)
             .HasForeignKey(t => t.CategoryId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Transaction → Source (1 kaynak, birçok işlem)
         modelBuilder.Entity<Transaction>()
             .HasOne(t => t.Source)
             .WithMany(s => s.Transactions)
             .HasForeignKey(t => t.SourceId)
             .OnDelete(DeleteBehavior.Restrict);
+        // === EKLENTİ SONU ===
     }
 }

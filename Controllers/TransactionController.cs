@@ -6,8 +6,8 @@ using Cuzdan360Backend.Repositories;
 using Cuzdan360Backend.Models.Finance;
 using Cuzdan360Backend.Models.DTOs;
 using System.Security.Claims;
-using Cuzdan360Backend.Data; // 👈 1. EKLENDİ (DbContext için)
-using Microsoft.EntityFrameworkCore; // 👈 2. EKLENDİ (ToListAsync için)
+using Cuzdan360Backend.Data; // 👈 1. EKLENMELİ (DbContext için)
+using Microsoft.EntityFrameworkCore; // 👈 2. EKLENMELİ (ToListAsync için)
 
 namespace Cuzdan360Backend.Controllers
 {
@@ -17,13 +17,13 @@ namespace Cuzdan360Backend.Controllers
     public class TransactionsController : ControllerBase
     {
         private readonly ITransactionRepository _transactionRepo;
-        private readonly AppDbContext _context; // 👈 3. EKLENDİ (Lookup verileri için)
+        private readonly AppDbContext _context; // 👈 3. EKLENMELİ (Lookup verileri için)
 
-        // 4. CONSTRUCTOR GÜNCELLENDİ
+        // 4. CONSTRUCTOR GÜNCELLENMELİ: AppDbContext eklenmeli
         public TransactionsController(ITransactionRepository transactionRepo, AppDbContext context)
         {
             _transactionRepo = transactionRepo;
-            _context = context; // 👈 EKLENDİ
+            _context = context; 
         }
 
         /// <summary>
@@ -76,7 +76,7 @@ namespace Cuzdan360Backend.Controllers
 
             await _transactionRepo.AddTransactionAsync(transaction);
 
-            // 🔽 === 5. DÜZELTME (EKSİK KISIM) === 🔽
+            // 🔽 === 5. DÜZELTME (Ekleme sonrası 'Invalid Date' sorunu için) === 🔽
             // Frontend'in tabloyu güncelleyebilmesi için,
             // ilişkili verileri (Category, Source vb.) içeren tam objeyi geri dönmeliyiz.
             var newTransactionWithIncludes = await _transactionRepo.GetTransactionByIdAsync(transaction.TransactionId, userId);
@@ -111,7 +111,7 @@ namespace Cuzdan360Backend.Controllers
 
             await _transactionRepo.UpdateTransactionAsync(transaction);
 
-            return NoContent(); // 204 No Content - Başarılı güncelleme
+            return NoContent(); 
         }
 
         /// <summary>
@@ -130,11 +130,11 @@ namespace Cuzdan360Backend.Controllers
 
             await _transactionRepo.DeleteTransactionAsync(transaction);
 
-            return NoContent(); // 204 No Content - Başarılı silme
+            return NoContent(); 
         }
 
         
-        // === 7. YENİ ENDPOINT'LER EKLENDİ (Form için) ===
+        // === 7. YENİ ENDPOINT'LER ("Veri Yükleme Hatası" sorunu için) ===
 
         /// <summary>
         /// Formda kullanılacak tüm kategorileri listeler.
