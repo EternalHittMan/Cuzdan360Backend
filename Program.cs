@@ -40,9 +40,9 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowNextApp",
         policy =>
         {
-            policy.WithOrigins("http://localhost:3000") // Next.js'in çalıştığı adres
-                  .AllowAnyHeader()
-                  .AllowAnyMethod();
+            policy.WithOrigins("http://localhost:9003") // 👈 PORTU 9003 OLARAK GÜNCELLE
+                .AllowAnyHeader()
+                .AllowAnyMethod();
         });
 });
 // *** BİTTİ: CORS Politikası ***

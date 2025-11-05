@@ -26,6 +26,37 @@ public class AuthController : ControllerBase
         _logger = logger;
     }
 
+    // eternalhittman/cuzdan360backend/EternalHittMan-Cuzdan360Backend-d9f10b2e9e1857f66f4861cea7a43a81242f69ad/Controllers/AuthController.cs
+    
+        [HttpPost("login-email")] // YENİ ENDPOINT (login-email)
+        [EnableRateLimiting("LoginLimit")]
+        public async Task<IActionResult> LoginWithEmail(LoginWithEmailRequest request) // LoginWithEmailRequest DTO'sunu kullan
+        {
+            try
+            {
+                // Doğru servis metodunu (e-posta ile) çağır
+                var loginResponse = await _authService.LoginWithEmailAsync(request);
+    
+                if (loginResponse.RequiresOtp)
+                {
+                    return Ok(new { requiresOtp = true, message = "OTP kodunuz e-posta adresinize gönderildi." });
+                }
+    
+                return Ok(new { token = loginResponse.Token });
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _logger.LogWarning(ex, "Login with email failed for user {Email}", request.Email);
+                return Unauthorized(new { message = ex.Message });
+            }
+            catch (CustomException ex) // Diğer özel hataları da yakala
+            {
+                _logger.LogWarning(ex, "Login with email failed for user {Email}", request.Email);
+                return StatusCode(ex.StatusCode, new { message = ex.Message });
+            }
+        }
+    
+    
     [HttpPost("login")]
     [EnableRateLimiting("LoginLimit")]
     public async Task<IActionResult> Login(LoginRequest request)
