@@ -6,19 +6,24 @@ using Cuzdan360Backend.Repositories;
 using Cuzdan360Backend.Models.Finance;
 using Cuzdan360Backend.Models.DTOs;
 using System.Security.Claims;
+using Cuzdan360Backend.Data; // 👈 1. EKLENDİ (DbContext için)
+using Microsoft.EntityFrameworkCore; // 👈 2. EKLENDİ (ToListAsync için)
 
 namespace Cuzdan360Backend.Controllers
 {
-    [Authorize] // 👈 Sadece giriş yapmış kullanıcılar erişebilir
+    [Authorize]
     [ApiController]
     [Route("api/[controller]")]
     public class TransactionsController : ControllerBase
     {
         private readonly ITransactionRepository _transactionRepo;
+        private readonly AppDbContext _context; // 👈 3. EKLENDİ (Lookup verileri için)
 
-        public TransactionsController(ITransactionRepository transactionRepo)
+        // 4. CONSTRUCTOR GÜNCELLENDİ
+        public TransactionsController(ITransactionRepository transactionRepo, AppDbContext context)
         {
             _transactionRepo = transactionRepo;
+            _context = context; // 👈 EKLENDİ
         }
 
         /// <summary>
@@ -43,7 +48,6 @@ namespace Cuzdan360Backend.Controllers
 
             if (transaction == null)
             {
-                // Kullanıcı ya başkasının işlemine ya da var olmayan bir işleme erişmeye çalıştı
                 return NotFound(new { error = "İşlem bulunamadı." });
             }
 
@@ -58,7 +62,6 @@ namespace Cuzdan360Backend.Controllers
         {
             var userId = GetCurrentUserId();
 
-            // DTO'yu ana Transaction modeline dönüştür
             var transaction = new Transaction
             {
                 UserId = userId,
@@ -73,8 +76,14 @@ namespace Cuzdan360Backend.Controllers
 
             await _transactionRepo.AddTransactionAsync(transaction);
 
-            // Başarılı oluşturma için 201 Created yanıtı ve verinin konumu
-            return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
+            // 🔽 === 5. DÜZELTME (EKSİK KISIM) === 🔽
+            // Frontend'in tabloyu güncelleyebilmesi için,
+            // ilişkili verileri (Category, Source vb.) içeren tam objeyi geri dönmeliyiz.
+            var newTransactionWithIncludes = await _transactionRepo.GetTransactionByIdAsync(transaction.TransactionId, userId);
+            // 🔼 === DÜZELTME SONU === 🔼
+
+            // 6. DÖNÜŞ DEĞERİ GÜNCELLENDİ
+            return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, newTransactionWithIncludes);
         }
 
         /// <summary>
@@ -123,6 +132,50 @@ namespace Cuzdan360Backend.Controllers
 
             return NoContent(); // 204 No Content - Başarılı silme
         }
+
+        
+        // === 7. YENİ ENDPOINT'LER EKLENDİ (Form için) ===
+
+        /// <summary>
+        /// Formda kullanılacak tüm kategorileri listeler.
+        /// </summary>
+        [HttpGet("categories")]
+        public async Task<IActionResult> GetCategories()
+        {
+            var categories = await _context.Categories
+                .Select(c => new { c.CategoryId, c.Name })
+                .OrderBy(c => c.Name) // Alfabetik sırala
+                .ToListAsync();
+            return Ok(categories);
+        }
+
+        /// <summary>
+        /// Formda kullanılacak tüm kaynakları listeler.
+        /// </summary>
+        [HttpGet("sources")]
+        public async Task<IActionResult> GetSources()
+        {
+            var sources = await _context.Sources
+                .Select(s => new { s.SourceId, s.SourceName })
+                .OrderBy(s => s.SourceName)
+                .ToListAsync();
+            return Ok(sources);
+        }
+
+        /// <summary>
+        /// Formda kullanılacak tüm varlık tiplerini listeler.
+        /// </summary>
+        [HttpGet("asset-types")]
+        public async Task<IActionResult> GetAssetTypes()
+        {
+            var assetTypes = await _context.AssetTypes
+                .Select(a => new { a.AssetTypeId, a.Name, a.Code })
+                .OrderBy(a => a.Name)
+                .ToListAsync();
+            return Ok(assetTypes);
+        }
+        
+        // === YENİ ENDPOINT'LER SONU ===
 
 
         /// <summary>
