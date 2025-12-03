@@ -8,13 +8,13 @@ namespace Cuzdan360Backend.Models.DTOs
     public class CreateTransactionRequest
     {
         [Required]
-        public int AssetTypeId { get; set; }
+        public int? AssetTypeId { get; set; }
 
         [Required]
-        public int CategoryId { get; set; }
+        public int? CategoryId { get; set; }
 
         [Required]
-        public int SourceId { get; set; }
+        public int? SourceId { get; set; }
 
         [Required]
         public TransactionType TransactionType { get; set; } // Income = 0, Expense = 1

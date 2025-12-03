@@ -1,5 +1,3 @@
-// Dosya: Repositories/ITransactionRepository.cs
-
 using Cuzdan360Backend.Models.Finance;
 
 namespace Cuzdan360Backend.Repositories
@@ -30,5 +28,10 @@ namespace Cuzdan360Backend.Repositories
         /// Mevcut bir işlemi siler.
         /// </summary>
         Task DeleteTransactionAsync(Transaction transaction);
+
+        /// <summary>
+        /// Toplu işlem ekler.
+        /// </summary>
+        Task AddRangeAsync(IEnumerable<Transaction> transactions);
     }
 }
