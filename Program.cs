@@ -61,6 +61,10 @@ builder.Services.AddScoped<EmailService>();
 // NewsService'i IHttpClientFactory (HTTP istekleri için) ile birlikte kaydet
 builder.Services.AddHttpClient<NewsService>();
 builder.Services.AddScoped<NewsService>();
+
+// Gemini Receipt Service
+builder.Services.AddHttpClient<GeminiReceiptService>();
+builder.Services.AddScoped<GeminiReceiptService>();
 // --- BİTİŞ ---
 
 builder.Services.AddHttpContextAccessor();

@@ -1,13 +1,12 @@
-// Dosya: Controllers/TransactionsController.cs
-
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Cuzdan360Backend.Repositories;
 using Cuzdan360Backend.Models.Finance;
 using Cuzdan360Backend.Models.DTOs;
 using System.Security.Claims;
-using Cuzdan360Backend.Data; // 👈 1. EKLENMELİ (DbContext için)
-using Microsoft.EntityFrameworkCore; // 👈 2. EKLENMELİ (ToListAsync için)
+using Cuzdan360Backend.Data;
+using Microsoft.EntityFrameworkCore;
+using Cuzdan360Backend.Services;
 
 namespace Cuzdan360Backend.Controllers
 {
@@ -17,13 +16,20 @@ namespace Cuzdan360Backend.Controllers
     public class TransactionsController : ControllerBase
     {
         private readonly ITransactionRepository _transactionRepo;
-        private readonly AppDbContext _context; // 👈 3. EKLENMELİ (Lookup verileri için)
+        private readonly AppDbContext _context;
+        private readonly ILogger<TransactionsController> _logger;
+        private readonly GeminiReceiptService _geminiService;
 
-        // 4. CONSTRUCTOR GÜNCELLENMELİ: AppDbContext eklenmeli
-        public TransactionsController(ITransactionRepository transactionRepo, AppDbContext context)
+        public TransactionsController(
+            ITransactionRepository transactionRepo, 
+            AppDbContext context,
+            ILogger<TransactionsController> logger,
+            GeminiReceiptService geminiService)
         {
             _transactionRepo = transactionRepo;
-            _context = context; 
+            _context = context;
+            _logger = logger;
+            _geminiService = geminiService;
         }
 
         /// <summary>
@@ -32,9 +38,27 @@ namespace Cuzdan360Backend.Controllers
         [HttpGet]
         public async Task<IActionResult> GetUserTransactions()
         {
-            var userId = GetCurrentUserId();
-            var transactions = await _transactionRepo.GetTransactionsByUserIdAsync(userId);
-            return Ok(transactions);
+            try
+            {
+                var userId = GetCurrentUserId();
+                _logger.LogInformation("İşlemler getiriliyor. UserId: {UserId}", userId);
+                
+                var transactions = await _transactionRepo.GetTransactionsByUserIdAsync(userId);
+                
+                _logger.LogInformation("Toplam {Count} işlem bulundu", transactions.Count());
+                
+                return Ok(transactions);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _logger.LogWarning(ex, "Yetkisiz erişim denemesi");
+                return Unauthorized(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "İşlemler getirilirken hata oluştu");
+                return StatusCode(500, new { error = "Bir hata oluştu. Lütfen daha sonra tekrar deneyin." });
+            }
         }
 
         /// <summary>
@@ -43,15 +67,27 @@ namespace Cuzdan360Backend.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetTransaction(int id)
         {
-            var userId = GetCurrentUserId();
-            var transaction = await _transactionRepo.GetTransactionByIdAsync(id, userId);
-
-            if (transaction == null)
+            try
             {
-                return NotFound(new { error = "İşlem bulunamadı." });
-            }
+                var userId = GetCurrentUserId();
+                var transaction = await _transactionRepo.GetTransactionByIdAsync(id, userId);
 
-            return Ok(transaction);
+                if (transaction == null)
+                {
+                    return NotFound(new { error = "İşlem bulunamadı." });
+                }
+
+                return Ok(transaction);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "İşlem getirilirken hata oluştu. TransactionId: {TransactionId}", id);
+                return StatusCode(500, new { error = "Bir hata oluştu." });
+            }
         }
 
         /// <summary>
@@ -60,30 +96,62 @@ namespace Cuzdan360Backend.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateTransaction([FromBody] CreateTransactionRequest request)
         {
-            var userId = GetCurrentUserId();
-
-            var transaction = new Transaction
+            try
             {
-                UserId = userId,
-                AssetTypeId = request.AssetTypeId,
-                CategoryId = request.CategoryId,
-                SourceId = request.SourceId,
-                TransactionType = request.TransactionType,
-                Amount = request.Amount,
-                Title = request.Title,
-                TransactionDate = request.TransactionDate.ToUniversalTime()
-            };
+                if (!ModelState.IsValid)
+                {
+                    var errors = ModelState.Values
+                        .SelectMany(v => v.Errors)
+                        .Select(e => e.ErrorMessage);
+                    return BadRequest(new { error = string.Join(", ", errors) });
+                }
 
-            await _transactionRepo.AddTransactionAsync(transaction);
+                var userId = GetCurrentUserId();
+                
+                _logger.LogInformation("Yeni işlem oluşturuluyor. UserId: {UserId}, Type: {Type}, Amount: {Amount}", 
+                    userId, request.TransactionType, request.Amount);
 
-            // 🔽 === 5. DÜZELTME (Ekleme sonrası 'Invalid Date' sorunu için) === 🔽
-            // Frontend'in tabloyu güncelleyebilmesi için,
-            // ilişkili verileri (Category, Source vb.) içeren tam objeyi geri dönmeliyiz.
-            var newTransactionWithIncludes = await _transactionRepo.GetTransactionByIdAsync(transaction.TransactionId, userId);
-            // 🔼 === DÜZELTME SONU === 🔼
+                var transaction = new Transaction
+                {
+                    UserId = userId,
+                    AssetTypeId = request.AssetTypeId.Value,
+                    CategoryId = request.CategoryId.Value,
+                    SourceId = request.SourceId.Value,
+                    TransactionType = request.TransactionType,
+                    Amount = request.Amount,
+                    Title = request.Title,
+                    TransactionDate = DateTime.SpecifyKind(request.TransactionDate, DateTimeKind.Utc)
+                };
 
-            // 6. DÖNÜŞ DEĞERİ GÜNCELLENDİ
-            return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, newTransactionWithIncludes);
+                await _transactionRepo.AddTransactionAsync(transaction);
+
+                // Frontend için tam veri dön
+                var newTransactionWithIncludes = await _transactionRepo.GetTransactionByIdAsync(
+                    transaction.TransactionId, 
+                    userId);
+
+                _logger.LogInformation("İşlem başarıyla oluşturuldu. TransactionId: {TransactionId}", 
+                    transaction.TransactionId);
+
+                return CreatedAtAction(
+                    nameof(GetTransaction), 
+                    new { id = transaction.TransactionId }, 
+                    newTransactionWithIncludes);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new { error = ex.Message });
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Veritabanı hatası - İşlem oluşturulamadı");
+                return StatusCode(500, new { error = "İşlem kaydedilirken bir hata oluştu. Lütfen girdiğiniz verileri kontrol edin." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "İşlem oluşturulurken beklenmeyen hata");
+                return StatusCode(500, new { error = "Bir hata oluştu. Lütfen daha sonra tekrar deneyin." });
+            }
         }
 
         /// <summary>
@@ -92,26 +160,55 @@ namespace Cuzdan360Backend.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateTransaction(int id, [FromBody] CreateTransactionRequest request)
         {
-            var userId = GetCurrentUserId();
-            var transaction = await _transactionRepo.GetTransactionByIdAsync(id, userId);
-
-            if (transaction == null)
+            try
             {
-                return NotFound(new { error = "Güncellenecek işlem bulunamadı." });
+                if (!ModelState.IsValid)
+                {
+                    var errors = ModelState.Values
+                        .SelectMany(v => v.Errors)
+                        .Select(e => e.ErrorMessage);
+                    return BadRequest(new { error = string.Join(", ", errors) });
+                }
+
+                var userId = GetCurrentUserId();
+                var transaction = await _transactionRepo.GetTransactionByIdAsync(id, userId);
+
+                if (transaction == null)
+                {
+                    return NotFound(new { error = "Güncellenecek işlem bulunamadı." });
+                }
+
+                _logger.LogInformation("İşlem güncelleniyor. TransactionId: {TransactionId}", id);
+
+                // Modeli güncelle
+                transaction.AssetTypeId = request.AssetTypeId.Value;
+                transaction.CategoryId = request.CategoryId.Value;
+                transaction.SourceId = request.SourceId.Value;
+                transaction.TransactionType = request.TransactionType;
+                transaction.Amount = request.Amount;
+                transaction.Title = request.Title;
+                transaction.TransactionDate = DateTime.SpecifyKind(request.TransactionDate, DateTimeKind.Utc);
+
+                await _transactionRepo.UpdateTransactionAsync(transaction);
+
+                _logger.LogInformation("İşlem başarıyla güncellendi. TransactionId: {TransactionId}", id);
+
+                return NoContent();
             }
-
-            // Modeli güncelle
-            transaction.AssetTypeId = request.AssetTypeId;
-            transaction.CategoryId = request.CategoryId;
-            transaction.SourceId = request.SourceId;
-            transaction.TransactionType = request.TransactionType;
-            transaction.Amount = request.Amount;
-            transaction.Title = request.Title;
-            transaction.TransactionDate = request.TransactionDate.ToUniversalTime();
-
-            await _transactionRepo.UpdateTransactionAsync(transaction);
-
-            return NoContent(); 
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new { error = ex.Message });
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Veritabanı hatası - İşlem güncellenemedi. TransactionId: {TransactionId}", id);
+                return StatusCode(500, new { error = "İşlem güncellenirken bir hata oluştu." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "İşlem güncellenirken hata. TransactionId: {TransactionId}", id);
+                return StatusCode(500, new { error = "Bir hata oluştu." });
+            }
         }
 
         /// <summary>
@@ -120,21 +217,34 @@ namespace Cuzdan360Backend.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteTransaction(int id)
         {
-            var userId = GetCurrentUserId();
-            var transaction = await _transactionRepo.GetTransactionByIdAsync(id, userId);
-
-            if (transaction == null)
+            try
             {
-                return NotFound(new { error = "Silinecek işlem bulunamadı." });
+                var userId = GetCurrentUserId();
+                var transaction = await _transactionRepo.GetTransactionByIdAsync(id, userId);
+
+                if (transaction == null)
+                {
+                    return NotFound(new { error = "Silinecek işlem bulunamadı." });
+                }
+
+                _logger.LogInformation("İşlem siliniyor. TransactionId: {TransactionId}", id);
+
+                await _transactionRepo.DeleteTransactionAsync(transaction);
+
+                _logger.LogInformation("İşlem başarıyla silindi. TransactionId: {TransactionId}", id);
+
+                return NoContent();
             }
-
-            await _transactionRepo.DeleteTransactionAsync(transaction);
-
-            return NoContent(); 
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "İşlem silinirken hata. TransactionId: {TransactionId}", id);
+                return StatusCode(500, new { error = "Bir hata oluştu." });
+            }
         }
-
-        
-        // === 7. YENİ ENDPOINT'LER ("Veri Yükleme Hatası" sorunu için) ===
 
         /// <summary>
         /// Formda kullanılacak tüm kategorileri listeler.
@@ -142,11 +252,22 @@ namespace Cuzdan360Backend.Controllers
         [HttpGet("categories")]
         public async Task<IActionResult> GetCategories()
         {
-            var categories = await _context.Categories
-                .Select(c => new { c.CategoryId, c.Name })
-                .OrderBy(c => c.Name) // Alfabetik sırala
-                .ToListAsync();
-            return Ok(categories);
+            try
+            {
+                var categories = await _context.Categories
+                    .Select(c => new { c.CategoryId, c.Name })
+                    .OrderBy(c => c.Name)
+                    .ToListAsync();
+                
+                _logger.LogInformation("Kategoriler başarıyla getirildi. Toplam: {Count}", categories.Count);
+                
+                return Ok(categories);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Kategoriler getirilirken hata");
+                return StatusCode(500, new { error = "Kategoriler yüklenemedi." });
+            }
         }
 
         /// <summary>
@@ -155,11 +276,22 @@ namespace Cuzdan360Backend.Controllers
         [HttpGet("sources")]
         public async Task<IActionResult> GetSources()
         {
-            var sources = await _context.Sources
-                .Select(s => new { s.SourceId, s.SourceName })
-                .OrderBy(s => s.SourceName)
-                .ToListAsync();
-            return Ok(sources);
+            try
+            {
+                var sources = await _context.Sources
+                    .Select(s => new { s.SourceId, s.SourceName })
+                    .OrderBy(s => s.SourceName)
+                    .ToListAsync();
+                
+                _logger.LogInformation("Kaynaklar başarıyla getirildi. Toplam: {Count}", sources.Count);
+                
+                return Ok(sources);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Kaynaklar getirilirken hata");
+                return StatusCode(500, new { error = "Kaynaklar yüklenemedi." });
+            }
         }
 
         /// <summary>
@@ -168,15 +300,23 @@ namespace Cuzdan360Backend.Controllers
         [HttpGet("asset-types")]
         public async Task<IActionResult> GetAssetTypes()
         {
-            var assetTypes = await _context.AssetTypes
-                .Select(a => new { a.AssetTypeId, a.Name, a.Code })
-                .OrderBy(a => a.Name)
-                .ToListAsync();
-            return Ok(assetTypes);
+            try
+            {
+                var assetTypes = await _context.AssetTypes
+                    .Select(a => new { a.AssetTypeId, a.Name, a.Code })
+                    .OrderBy(a => a.Name)
+                    .ToListAsync();
+                
+                _logger.LogInformation("Varlık tipleri başarıyla getirildi. Toplam: {Count}", assetTypes.Count);
+                
+                return Ok(assetTypes);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Varlık tipleri getirilirken hata");
+                return StatusCode(500, new { error = "Varlık tipleri yüklenemedi." });
+            }
         }
-        
-        // === YENİ ENDPOINT'LER SONU ===
-
 
         /// <summary>
         /// JWT tokendan o anki kullanıcının ID'sini çeken yardımcı metot.
@@ -186,9 +326,92 @@ namespace Cuzdan360Backend.Controllers
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (string.IsNullOrEmpty(userIdClaim))
             {
+                _logger.LogWarning("Token'da kullanıcı ID'si bulunamadı");
                 throw new UnauthorizedAccessException("Geçersiz token. Kullanıcı kimliği bulunamadı.");
             }
-            return int.Parse(userIdClaim);
+            
+            if (!int.TryParse(userIdClaim, out int userId))
+            {
+                _logger.LogWarning("Token'daki kullanıcı ID'si parse edilemedi: {UserIdClaim}", userIdClaim);
+                throw new UnauthorizedAccessException("Geçersiz kullanıcı kimliği.");
+            }
+            
+            return userId;
+        }
+
+        /// <summary>
+        /// Fiş/Fatura görselini analiz eder ve işlem önerileri döner.
+        /// </summary>
+        [HttpPost("analyze-receipt")]
+        public async Task<IActionResult> AnalyzeReceipt(IFormFile file)
+        {
+            try
+            {
+                _logger.LogInformation("Fiş analizi başlatıldı.");
+                
+                // Context verilerini çek
+                var categories = await _context.Categories.ToListAsync();
+                var sources = await _context.Sources.ToListAsync();
+                var assetTypes = await _context.AssetTypes.ToListAsync();
+
+                var extractedTransactions = await _geminiService.AnalyzeReceiptAsync(file, categories, sources, assetTypes);
+
+                // Smart Matching (Artık Gemini ID dönüyor ama yine de string match fallback kalabilir veya kaldırılabilir. 
+                // Gemini ID döndüğü için buradaki döngüye gerek kalmayabilir ama DTO'da eksik gelirse diye string match'i koruyalım mı?
+                // Kullanıcı "promptta düzenleme ekle" dedi, yani ID'lerin prompttan gelmesini istiyor.
+                // Kod temizliği için manuel eşleştirmeyi kaldırıyorum çünkü prompt artık bunu yapıyor.)
+
+                return Ok(extractedTransactions);
+
+                return Ok(extractedTransactions);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Fiş analizi sırasında hata.");
+                return StatusCode(500, new { error = "Fiş analizi başarısız oldu." });
+            }
+        }
+
+        /// <summary>
+        /// Toplu işlem ekler.
+        /// </summary>
+        [HttpPost("bulk-create")]
+        public async Task<IActionResult> BulkCreateTransactions([FromBody] BulkCreateTransactionRequest request)
+        {
+            try
+            {
+                if (request?.Transactions == null || !request.Transactions.Any())
+                {
+                    return BadRequest(new { error = "Eklenecek işlem bulunamadı." });
+                }
+
+                var userId = GetCurrentUserId();
+                var transactions = new List<Transaction>();
+
+                foreach (var item in request.Transactions)
+                {
+                    transactions.Add(new Transaction
+                    {
+                        UserId = userId,
+                        Title = item.Title,
+                        Amount = item.Amount,
+                        TransactionDate = DateTime.SpecifyKind(item.TransactionDate, DateTimeKind.Utc),
+                        TransactionType = item.TransactionType,
+                        CategoryId = item.CategoryId.Value,
+                        SourceId = item.SourceId.Value,
+                        AssetTypeId = item.AssetTypeId.Value
+                    });
+                }
+
+                await _transactionRepo.AddRangeAsync(transactions);
+
+                return Ok(new { message = $"{transactions.Count} işlem başarıyla eklendi." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Toplu işlem ekleme hatası.");
+                return StatusCode(500, new { error = "Toplu işlem eklenirken bir hata oluştu." });
+            }
         }
     }
 }
