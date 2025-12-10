@@ -15,7 +15,7 @@ services:
   app:
     build: .
     ports:
-      - "8080:8080"
+      - "7031:8080"
     environment:
       - ConnectionStrings__DefaultConnection=Server=db;Database=myaimoderator;User=root;Password=test123;
     depends_on:
