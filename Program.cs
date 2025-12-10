@@ -65,7 +65,15 @@ builder.Services.AddScoped<NewsService>();
 // Gemini Receipt Service
 builder.Services.AddHttpClient<GeminiReceiptService>();
 builder.Services.AddScoped<GeminiReceiptService>();
+
+// Financial Advice Service
+builder.Services.AddHttpClient<AdviceService>();
+builder.Services.AddScoped<AdviceService>();
+
+// Background Worker
+builder.Services.AddHostedService<RecurringTransactionWorker>();
 // --- BİTİŞ ---
+
 
 builder.Services.AddHttpContextAccessor();
 
