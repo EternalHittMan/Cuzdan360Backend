@@ -13,6 +13,7 @@ using Cuzdan360Backend.Repositories;
 using Cuzdan360Backend.Models.Finance;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using Microsoft.Extensions.Caching.Memory;
 
 
 
@@ -119,6 +120,7 @@ private static readonly Dictionary<string, string> TickerMap = new()
         private readonly AdviceService _adviceService; // 👈 EKLENDİ
         private readonly AppDbContext _context; // 👈 EKLENDİ (UserAssets için)
         private readonly ITransactionRepository _transactionRepo; // 👈 Advice için veri çekmek gerekebilir
+        private readonly IMemoryCache _cache; // 👈 Cache servisi eklendi
 
         // NewsService'i controller'a enjekte ediyoruz
         public FinanceController(
@@ -126,13 +128,15 @@ private static readonly Dictionary<string, string> TickerMap = new()
             NewsService newsService,
             AdviceService adviceService,
             AppDbContext context,
-            ITransactionRepository transactionRepo) 
+            ITransactionRepository transactionRepo,
+            IMemoryCache cache) 
         {
             _logger = logger;
             _newsService = newsService;
             _adviceService = adviceService;
             _context = context;
             _transactionRepo = transactionRepo;
+            _cache = cache;
         }
 
         private int GetCurrentUserId()
@@ -291,6 +295,12 @@ private static readonly Dictionary<string, string> TickerMap = new()
         /// </summary>
         private async Task<List<CurrencyRateDto>> GetCurrencyRatesAsync()
         {
+            const string cacheKey = "CurrencyRates_Cache";
+            if (_cache.TryGetValue(cacheKey, out List<CurrencyRateDto>? cachedRates) && cachedRates != null)
+            {
+                return cachedRates;
+            }
+
             var currencyRates = new List<CurrencyRateDto>();
             try
             {
@@ -311,6 +321,12 @@ private static readonly Dictionary<string, string> TickerMap = new()
                             (double)quote.RegularMarketChangePercent // decimal -> double
                         ));
                     }
+                }
+
+                // Cache'e ekle (eğer verili ise)
+                if (currencyRates.Any())
+                {
+                   _cache.Set(cacheKey, currencyRates, TimeSpan.FromMinutes(15));
                 }
             }
             catch (Exception ex)
