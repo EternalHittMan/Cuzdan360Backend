@@ -47,7 +47,7 @@ builder.Services.AddTransient<TokenService>();
 builder.Services.AddHostedService<TokenCleanupService>();
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+// builder.Services.AddSwaggerGen(); // Duplicate removed
 builder.Services.AddSwaggerGen(SwaggerConfiguration.Configure);
 
 builder.Services.AddJwtAuthentication(builder.Configuration);
