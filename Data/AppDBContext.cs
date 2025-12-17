@@ -14,6 +14,9 @@ public class AppDbContext : DbContext
     public DbSet<Category> Categories { get; set; }
     public DbSet<Source> Sources { get; set; }
     public DbSet<Transaction> Transactions { get; set; }
+    public DbSet<RecurringTransaction> RecurringTransactions { get; set; }
+    public DbSet<UserAsset> UserAssets { get; set; }
+
     // === EKLENTİ SONU ===
 
 

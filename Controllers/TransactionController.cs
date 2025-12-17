@@ -7,6 +7,9 @@ using System.Security.Claims;
 using Cuzdan360Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using Cuzdan360Backend.Services;
+using ClosedXML.Excel;
+using System.IO;
+
 
 namespace Cuzdan360Backend.Controllers
 {
@@ -411,6 +414,127 @@ namespace Cuzdan360Backend.Controllers
             {
                 _logger.LogError(ex, "Toplu işlem ekleme hatası.");
                 return StatusCode(500, new { error = "Toplu işlem eklenirken bir hata oluştu." });
+            }
+        }
+        /// <summary>
+        /// Excel dosyasından işlem yükler.
+        /// </summary>
+        [HttpPost("import")]
+        public async Task<IActionResult> ImportTransactions(IFormFile file)
+        {
+            try
+            {
+                if (file == null || file.Length == 0)
+                    return BadRequest(new { error = "Dosya yüklenmedi." });
+
+                var transactions = new List<Transaction>();
+                var userId = GetCurrentUserId();
+
+                using (var stream = new MemoryStream())
+                {
+                    await file.CopyToAsync(stream);
+                    using (var workbook = new XLWorkbook(stream))
+                    {
+                        var worksheet = workbook.Worksheet(1);
+                        var rows = worksheet.RangeUsed().RowsUsed().Skip(1); // Header'ı atla
+
+                        foreach (var row in rows)
+                        {
+                            try
+                            {
+                                // Örnek Format: Date | Description | Amount | Type (Income/Expense)
+                                var dateVal = row.Cell(1).GetDateTime();
+                                var descVal = row.Cell(2).GetValue<string>();
+                                var amountVal = row.Cell(3).GetValue<decimal>();
+                                var typeVal = row.Cell(4).GetValue<string>(); // "Gelir" veya "Gider"
+
+                                int type = (typeVal?.ToLower().Contains("gelir") == true) ? 0 : 1;
+
+                                transactions.Add(new Transaction
+                                {
+                                    UserId = userId,
+                                    TransactionDate = DateTime.SpecifyKind(dateVal, DateTimeKind.Utc),
+                                    Title = descVal,
+                                    Amount = amountVal,
+                                    TransactionType = (TransactionType)type,
+                                    CategoryId = 22, // Varsayılan: Diğer Giderler (veya mantıklı bir default)
+                                    SourceId = 1,    // Varsayılan: Nakit
+                                    AssetTypeId = 1  // Varsayılan: TRY
+                                });
+                            }
+                            catch
+                            {
+                                // Satır hatası varsa atla veya logla
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                if (transactions.Any())
+                {
+                    await _transactionRepo.AddRangeAsync(transactions);
+                    return Ok(new { message = $"{transactions.Count} işlem başarıyla yüklendi." });
+                }
+
+                return BadRequest(new { error = "Hiçbir işlem yüklenemedi. Formatı kontrol edin." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Excel yükleme hatası.");
+                return StatusCode(500, new { error = "Dosya işlenirken hata oluştu." });
+            }
+        }
+
+        /// <summary>
+        /// Tüm işlemleri Excel olarak indirir.
+        /// </summary>
+        [HttpGet("export")]
+        public async Task<IActionResult> ExportTransactions()
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                var transactions = await _transactionRepo.GetTransactionsByUserIdAsync(userId);
+                
+                using (var workbook = new XLWorkbook())
+                {
+                    var worksheet = workbook.Worksheets.Add("İşlemler");
+                    
+                    // Headers
+                    worksheet.Cell(1, 1).Value = "Tarih";
+                    worksheet.Cell(1, 2).Value = "Başlık";
+                    worksheet.Cell(1, 3).Value = "Tutar";
+                    worksheet.Cell(1, 4).Value = "Tip";
+                    worksheet.Cell(1, 5).Value = "Kategori";
+                    worksheet.Cell(1, 6).Value = "Kaynak";
+
+                    int row = 2;
+                    foreach (var t in transactions)
+                    {
+                        worksheet.Cell(row, 1).Value = t.TransactionDate;
+                        worksheet.Cell(row, 2).Value = t.Title;
+                        worksheet.Cell(row, 3).Value = t.Amount;
+                        worksheet.Cell(row, 4).Value = t.TransactionType == 0 ? "Gelir" : "Gider";
+                        worksheet.Cell(row, 5).Value = t.Category?.Name ?? "-";
+                        worksheet.Cell(row, 6).Value = t.Source?.SourceName ?? "-";
+                        row++;
+                    }
+
+                    worksheet.Columns().AdjustToContents();
+
+                    using (var stream = new MemoryStream())
+                    {
+                        workbook.SaveAs(stream);
+                        var content = stream.ToArray();
+                        return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"Islemler_{DateTime.Now:yyyyMMdd}.xlsx");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Excel dışa aktarma hatası.");
+                return StatusCode(500, new { error = "Dosya oluşturulamadı." });
             }
         }
     }

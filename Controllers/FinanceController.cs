@@ -8,11 +8,23 @@ using Microsoft.AspNetCore.Authorization;
 using System.Globalization;
 using Cuzdan360Backend.Models.DTOs; // 👈 DTO'ları kullanmak için eklendi
 using Cuzdan360Backend.Services; // 👈 NewsService'i kullanmak için eklendi
+using Cuzdan360Backend.Data;
+using Cuzdan360Backend.Repositories;
+using Cuzdan360Backend.Models.Finance;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+
+
+
 
 namespace Cuzdan360Backend.Controllers
 {
     // --- DTO (Data Transfer Objects) ---
     // Not: NewsArticleDto, Models/DTOs/NewsDtos.cs dosyasından geliyor.
+
+    public record AssetPortfolioItemDto(string AssetName, decimal Quantity, decimal CurrentValueTRY);
+    public record PortfolioSummaryDto(List<AssetPortfolioItemDto> Assets, decimal TotalNetWorthTRY);
+
 
     /// <summary>
     /// Kur verisi DTO'su
@@ -103,14 +115,36 @@ private static readonly Dictionary<string, string> TickerMap = new()
     { "META", "Meta Platforms, Inc." }
 };
         private readonly ILogger<FinanceController> _logger;
-        private readonly NewsService _newsService; // 👈 EKLENDİ
+        private readonly NewsService _newsService;
+        private readonly AdviceService _adviceService; // 👈 EKLENDİ
+        private readonly AppDbContext _context; // 👈 EKLENDİ (UserAssets için)
+        private readonly ITransactionRepository _transactionRepo; // 👈 Advice için veri çekmek gerekebilir
 
         // NewsService'i controller'a enjekte ediyoruz
-        public FinanceController(ILogger<FinanceController> logger, NewsService newsService) // 👈 GÜNCELLENDİ
+        public FinanceController(
+            ILogger<FinanceController> logger, 
+            NewsService newsService,
+            AdviceService adviceService,
+            AppDbContext context,
+            ITransactionRepository transactionRepo) 
         {
             _logger = logger;
-            _newsService = newsService; // 👈 EKLENDİ
+            _newsService = newsService;
+            _adviceService = adviceService;
+            _context = context;
+            _transactionRepo = transactionRepo;
         }
+
+        private int GetCurrentUserId()
+        {
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int userId))
+            {
+                throw new UnauthorizedAccessException("Geçersiz kullanıcı kimliği.");
+            }
+            return userId;
+        }
+
 
         /// <summary>
         /// Dashboard için gerekli kur ve haber verilerini çeker.
@@ -134,6 +168,122 @@ private static readonly Dictionary<string, string> TickerMap = new()
             );
             
             return Ok(response);
+        }
+
+
+        /// <summary>
+        /// Kullanıcının varlık portföyünü ve toplam servetini hesaplar.
+        /// </summary>
+        [HttpGet("portfolio")]
+        public async Task<IActionResult> GetPortfolio()
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                var userAssets = await _context.UserAssets
+                    .Include(ua => ua.AssetType)
+                    .Where(ua => ua.UserId == userId)
+                    .ToListAsync();
+
+                var portfolioItems = new List<AssetPortfolioItemDto>();
+                decimal totalNetWorth = 0;
+
+                // Live data çekimi için ticker listesi hazırla
+                // Sadece user'ın sahip olduğu asset tipleri için sorgu atabiliriz veya genel listeyi kullanırız.
+                // Basitlik için mevcut GetCurrencyRatesAsync metodunu optimize etmeden kullanalım veya cache'leyelim.
+                // Burada GetCurrencyRatesAsync çağırıp içinden ihtiyacımız olanları seçeceğiz.
+                
+                var rates = await GetCurrencyRatesAsync(); // Tüm kurları çeker (cache mekanizması olsa iyi olur ama MVP için ok)
+
+                foreach (var asset in userAssets)
+                {
+                    if (asset.AssetType == null) continue;
+
+                    decimal currentValue = 0;
+                    
+                    // TRY ise direkt miktar
+                    if (asset.AssetType.Code == "TRY")
+                    {
+                        currentValue = asset.Amount;
+                    }
+                    else
+                    {
+                        // Kur listesinde bulmaya çalış
+                        // AssetType.Code ile TickerMap veya Yahoo symbolleri arasında eşleşme lazım.
+                        // UserAsset code: "USD", "EUR", "XAUTRY", "BTC" vs.
+                        // TickerMap'te Value (veya Key) ile eşleştirme yapmamız lazım. 
+                        // Basit bir mapping yapalım:
+                        
+                        // Bu basit MVP için DB'deki Code alanını Yahoo sembolü ile uyumlu varsayalım veya manuel mapleyelim.
+                        // Örnek: USD -> USDTRY=X kuru ile çarp. BTC -> BTC-USD * USDTRY (Eğer TRY istiyorsak).
+                        // Veya direkt XAUTRY=X -> Gram Altın.
+                        
+                        // Code alanını kontrol edelim:
+                        // "USD" -> "USDTRY=X" in Rate'i ile çarp.
+                        // "EUR" -> "EURTRY=X" in Rate'i ile çarp.
+                        // "XAUTRY" -> "XAUTRY=X" in Rate'i ile çarp.
+                        
+                        // Mapping Logic:
+                        string searchKey = "";
+                        if (asset.AssetType.Code == "USD") searchKey = "USD/TRY";
+                        else if (asset.AssetType.Code == "EUR") searchKey = "EUR/TRY";
+                        else if (asset.AssetType.Code == "XAUTRY") searchKey = "Gram Altın (TL)";
+                        else if (asset.AssetType.Code == "BTC") searchKey = "Bitcoin (BTC/USD)"; 
+                        // Not: BTC için BTC-USD rate geliyor, bunu TRY'ye çevirmek lazım.
+                        
+                        var rateItem = rates.FirstOrDefault(r => r.Pair == searchKey);
+                        if (rateItem != null)
+                        {
+                            // Eğer BTC ise USD kuru ile çarpıp TRY'ye çevirmemiz gerekebilir.
+                            // Şimdilik sadece TRY pariteleri destekleyen basit logic:
+                            if (asset.AssetType.Code == "BTC")
+                            {
+                                var usdTry = rates.FirstOrDefault(r => r.Pair == "USD/TRY")?.Rate ?? 30; // Fallback
+                                currentValue = asset.Amount * (decimal)(rateItem.Rate * usdTry); 
+                            }
+                            else
+                            {
+                                currentValue = asset.Amount * (decimal)rateItem.Rate;
+                            }
+                        }
+                    }
+
+                    portfolioItems.Add(new AssetPortfolioItemDto(asset.AssetType.Name, asset.Amount, currentValue));
+                    totalNetWorth += currentValue;
+                }
+
+                return Ok(new PortfolioSummaryDto(portfolioItems, totalNetWorth));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Portföy hesaplanırken hata.");
+                return StatusCode(500, new { error = "Portföy bilgisi alınamadı." });
+            }
+        }
+
+        /// <summary>
+        /// Yapay Zeka destekli finansal tavsiye verir.
+        /// </summary>
+        [HttpGet("advice")]
+        public async Task<IActionResult> GetAdvice()
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                // Son 30 günlük işlemleri çek
+                 var transactions = await _transactionRepo.GetTransactionsByUserIdAsync(userId);
+                 var recent = transactions
+                     .Where(t => t.TransactionDate >= DateTime.UtcNow.AddDays(-30))
+                     .ToList();
+
+                 var adviceObj = await _adviceService.GetFinancialAdviceAsync(recent);
+                 return Ok(new { advice = adviceObj });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Tavsiye alınırken hata.");
+                return StatusCode(500, new { error = "Tavsiye servisi yanıt vermedi." });
+            }
         }
         
         /// <summary>
