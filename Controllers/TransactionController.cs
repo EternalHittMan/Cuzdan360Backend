@@ -16,17 +16,17 @@ namespace Cuzdan360Backend.Controllers
     [Authorize]
     [ApiController]
     [Route("api/[controller]")]
-    public class TransactionsController : ControllerBase
+    public class TransactionController : ControllerBase
     {
         private readonly ITransactionRepository _transactionRepo;
         private readonly AppDbContext _context;
-        private readonly ILogger<TransactionsController> _logger;
+        private readonly ILogger<TransactionController> _logger;
         private readonly GeminiReceiptService _geminiService;
 
-        public TransactionsController(
+        public TransactionController(
             ITransactionRepository transactionRepo, 
             AppDbContext context,
-            ILogger<TransactionsController> logger,
+            ILogger<TransactionController> logger,
             GeminiReceiptService geminiService)
         {
             _transactionRepo = transactionRepo;
@@ -366,7 +366,7 @@ namespace Cuzdan360Backend.Controllers
 
                 return Ok(extractedTransactions);
 
-                return Ok(extractedTransactions);
+
             }
             catch (Exception ex)
             {
