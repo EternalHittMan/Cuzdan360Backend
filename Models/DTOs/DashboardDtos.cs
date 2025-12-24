@@ -10,6 +10,7 @@ namespace Cuzdan360Backend.Models.DTOs
         public List<MonthlyTrendDto> Last6MonthsTrend { get; set; }       // For Line Chart
         public List<SourceFlowDto> SourceFlows { get; set; }              // For Horizontal Bar
         public List<UpcomingPaymentDto> UpcomingPayments { get; set; }    // For List/Calendar
+        public List<TransactionDto> RecentTransactions { get; set; }      // For Recent Transactions Table
     }
 
     public class ChartDataPointDto

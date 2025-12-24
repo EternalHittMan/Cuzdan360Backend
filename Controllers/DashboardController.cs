@@ -52,6 +52,9 @@ namespace Cuzdan360Backend.Controllers
                     .AsNoTracking()
                     .ToListAsync();
 
+                var user = await _context.Users.FindAsync(userId);
+                decimal userBalance = user?.Balance ?? 0;
+
                 // 2. Net Worth Calculation
                 decimal totalNetWorth = 0;
                 var netWorthDataPoints = new List<ChartDataPointDto>();
@@ -80,6 +83,19 @@ namespace Cuzdan360Backend.Controllers
                         Percentage = 0 // Will calc later
                     });
                 }
+                
+                // Add Cash Balance
+                if (userBalance > 0)
+                {
+                    totalNetWorth += userBalance;
+                    netWorthDataPoints.Add(new ChartDataPointDto
+                    {
+                        Label = "Nakit (TL)",
+                        Value = userBalance,
+                        Percentage = 0
+                    });
+                }
+
                 summary.TotalNetWorth = totalNetWorth;
 
                 // Update percentages for Pie Chart
@@ -214,6 +230,22 @@ namespace Cuzdan360Backend.Controllers
                 }
                 summary.UpcomingPayments = upcoming.OrderBy(x => x.DaysRemaining).Take(5).ToList();
 
+                // 8. Recent Transactions
+                summary.RecentTransactions = transactions
+                    .OrderByDescending(t => t.TransactionDate)
+                    .Take(5)
+                    .Select(t => new TransactionDto
+                    {
+                        TransactionId = t.TransactionId,
+                        Title = t.Title,
+                        Amount = t.Amount,
+                        TransactionDate = t.TransactionDate,
+                        TransactionType = t.TransactionType,
+                        CategoryName = t.Category?.Name ?? "Diğer",
+                        SourceName = t.Source?.SourceName
+                    })
+                    .ToList();
+                
                 return Ok(summary);
             }
             catch (Exception ex)
