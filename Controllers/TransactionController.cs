@@ -48,9 +48,26 @@ namespace Cuzdan360Backend.Controllers
                 
                 var transactions = await _transactionRepo.GetTransactionsByUserIdAsync(userId);
                 
+                var transactionDtos = transactions.Select(t => new TransactionDto
+                {
+                    TransactionId = t.TransactionId,
+                    UserId = t.UserId,
+                    AssetTypeId = t.AssetTypeId,
+                    CategoryId = t.CategoryId,
+                    SourceId = t.SourceId,
+                    TransactionType = t.TransactionType,
+                    Amount = t.Amount,
+                    Title = t.Title,
+                    TransactionDate = t.TransactionDate,
+                    CategoryName = t.Category?.Name,
+                    SourceName = t.Source?.SourceName,
+                    AssetTypeName = t.AssetType?.Name,
+                    AssetTypeCode = t.AssetType?.Code
+                });
+                
                 _logger.LogInformation("Toplam {Count} işlem bulundu", transactions.Count());
                 
-                return Ok(transactions);
+                return Ok(transactionDtos);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -60,7 +77,8 @@ namespace Cuzdan360Backend.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "İşlemler getirilirken hata oluştu");
-                return StatusCode(500, new { error = "Bir hata oluştu. Lütfen daha sonra tekrar deneyin." });
+                // DEBUG: Return full exception to user
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace, innerException = ex.InnerException?.Message });
             }
         }
 
@@ -80,7 +98,24 @@ namespace Cuzdan360Backend.Controllers
                     return NotFound(new { error = "İşlem bulunamadı." });
                 }
 
-                return Ok(transaction);
+                var transactionDto = new TransactionDto
+                {
+                    TransactionId = transaction.TransactionId,
+                    UserId = transaction.UserId,
+                    AssetTypeId = transaction.AssetTypeId,
+                    CategoryId = transaction.CategoryId,
+                    SourceId = transaction.SourceId,
+                    TransactionType = transaction.TransactionType,
+                    Amount = transaction.Amount,
+                    Title = transaction.Title,
+                    TransactionDate = transaction.TransactionDate,
+                    CategoryName = transaction.Category?.Name,
+                    SourceName = transaction.Source?.SourceName,
+                    AssetTypeName = transaction.AssetType?.Name,
+                    AssetTypeCode = transaction.AssetType?.Code
+                };
+
+                return Ok(transactionDto);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -110,6 +145,16 @@ namespace Cuzdan360Backend.Controllers
                 }
 
                 var userId = GetCurrentUserId();
+
+                // Validate Foreign Keys
+                if (!await _context.AssetTypes.AnyAsync(x => x.AssetTypeId == request.AssetTypeId))
+                    return BadRequest(new { error = "Geçersiz Varlık Tipi (AssetType)" });
+
+                if (!await _context.Categories.AnyAsync(x => x.CategoryId == request.CategoryId))
+                    return BadRequest(new { error = "Geçersiz Kategori" });
+
+                if (!await _context.Sources.AnyAsync(x => x.SourceId == request.SourceId))
+                    return BadRequest(new { error = "Geçersiz Kaynak" });
                 
                 _logger.LogInformation("Yeni işlem oluşturuluyor. UserId: {UserId}, Type: {Type}, Amount: {Amount}", 
                     userId, request.TransactionType, request.Amount);
@@ -133,13 +178,35 @@ namespace Cuzdan360Backend.Controllers
                     transaction.TransactionId, 
                     userId);
 
+                if (newTransactionWithIncludes == null) 
+                {
+                     return StatusCode(500, new { error = "İşlem oluşturuldu fakat geri getirilemedi." });
+                }
+
+                var transactionDto = new TransactionDto
+                {
+                    TransactionId = newTransactionWithIncludes.TransactionId,
+                    UserId = newTransactionWithIncludes.UserId,
+                    AssetTypeId = newTransactionWithIncludes.AssetTypeId,
+                    CategoryId = newTransactionWithIncludes.CategoryId,
+                    SourceId = newTransactionWithIncludes.SourceId,
+                    TransactionType = newTransactionWithIncludes.TransactionType,
+                    Amount = newTransactionWithIncludes.Amount,
+                    Title = newTransactionWithIncludes.Title,
+                    TransactionDate = newTransactionWithIncludes.TransactionDate,
+                    CategoryName = newTransactionWithIncludes.Category?.Name,
+                    SourceName = newTransactionWithIncludes.Source?.SourceName,
+                    AssetTypeName = newTransactionWithIncludes.AssetType?.Name,
+                    AssetTypeCode = newTransactionWithIncludes.AssetType?.Code
+                };
+
                 _logger.LogInformation("İşlem başarıyla oluşturuldu. TransactionId: {TransactionId}", 
                     transaction.TransactionId);
 
                 return CreatedAtAction(
                     nameof(GetTransaction), 
                     new { id = transaction.TransactionId }, 
-                    newTransactionWithIncludes);
+                    transactionDto);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -147,8 +214,8 @@ namespace Cuzdan360Backend.Controllers
             }
             catch (DbUpdateException ex)
             {
-                _logger.LogError(ex, "Veritabanı hatası - İşlem oluşturulamadı");
-                return StatusCode(500, new { error = "İşlem kaydedilirken bir hata oluştu. Lütfen girdiğiniz verileri kontrol edin." });
+                _logger.LogError(ex, "Veritabanı hatası - İşlem oluşturulamadı. Inner: {InnerMessage}", ex.InnerException?.Message);
+                return StatusCode(500, new { error = "İşlem kaydedilirken bir hata oluştu. Veri tutarlılığını kontrol edin.", details = ex.InnerException?.Message });
             }
             catch (Exception ex)
             {
@@ -180,6 +247,16 @@ namespace Cuzdan360Backend.Controllers
                 {
                     return NotFound(new { error = "Güncellenecek işlem bulunamadı." });
                 }
+
+                // Validate Foreign Keys
+                if (!await _context.AssetTypes.AnyAsync(x => x.AssetTypeId == request.AssetTypeId))
+                    return BadRequest(new { error = "Geçersiz Varlık Tipi" });
+
+                if (!await _context.Categories.AnyAsync(x => x.CategoryId == request.CategoryId))
+                    return BadRequest(new { error = "Geçersiz Kategori" });
+
+                if (!await _context.Sources.AnyAsync(x => x.SourceId == request.SourceId))
+                    return BadRequest(new { error = "Geçersiz Kaynak" });
 
                 _logger.LogInformation("İşlem güncelleniyor. TransactionId: {TransactionId}", id);
 

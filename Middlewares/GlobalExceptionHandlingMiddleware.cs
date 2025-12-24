@@ -52,7 +52,9 @@ public class GlobalExceptionHandlingMiddleware
 
         var response = new
         {
-            error = "Bir hata oluştu. Lütfen daha sonra tekrar deneyin."
+            error = exception.Message,
+            stackTrace = exception.StackTrace,
+            innerException = exception.InnerException?.Message
         };
 
         return context.Response.WriteAsync(JsonSerializer.Serialize(response));
