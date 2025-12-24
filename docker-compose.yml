@@ -3,6 +3,7 @@ version: '3.8'
 services:
   db:
     image: docker.io/library/mysql:8.0
+    container_name: cuzdan_db
     environment:
       MYSQL_ROOT_PASSWORD: test123
       MYSQL_DATABASE: myaimoderator
@@ -16,17 +17,27 @@ services:
       timeout: 5s
       retries: 10
     restart: always
+    networks:
+      - cuzdan-network
 
   app:
     build: .
+    container_name: cuzdan_app
     ports:
       - "8080:8080"
     environment:
+      - ASPNETCORE_ENVIRONMENT=Production
       - ConnectionStrings__DefaultConnection=Server=db;Database=myaimoderator;User=root;Password=test123;
     depends_on:
       db:
         condition: service_healthy
     restart: always
+    networks:
+      - cuzdan-network
 
 volumes:
   mysql_data:
+
+networks:
+  cuzdan-network:
+    driver: bridge

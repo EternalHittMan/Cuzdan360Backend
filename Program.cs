@@ -21,6 +21,7 @@ builder.Services.AddMemoryCache();
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    Console.WriteLine($"[DEBUG] ConnectionString Server: {connectionString?.Split(';').FirstOrDefault(s => s.StartsWith("Server="))}");
     options.UseMySql(
         connectionString,
         ServerVersion.AutoDetect(connectionString),
