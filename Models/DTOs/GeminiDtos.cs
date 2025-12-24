@@ -24,6 +24,7 @@ namespace Cuzdan360Backend.Models.DTOs
 
     public class BulkCreateTransactionRequest
     {
+        [System.Text.Json.Serialization.JsonPropertyName("transactions")]
         public List<CreateTransactionRequest> Transactions { get; set; }
     }
 }

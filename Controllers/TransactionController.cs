@@ -173,6 +173,29 @@ namespace Cuzdan360Backend.Controllers
 
                 await _transactionRepo.AddTransactionAsync(transaction);
 
+                // --- 2. TEKRARLAYAN İŞLEM KONTROLÜ ---
+                if (request.IsRecurring && request.RecurringDay.HasValue)
+                {
+                     var recurring = new RecurringTransaction
+                     {
+                         UserId = userId,
+                         Title = request.Title,
+                         Amount = request.Amount,
+                         CategoryId = request.CategoryId.Value,
+                         SourceId = request.SourceId.Value,
+                         AssetTypeId = request.AssetTypeId.Value,
+                         TransactionType = (int)request.TransactionType, // 0 or 1
+                         DayOfMonth = request.RecurringDay.Value, // 1-31 or 1-7
+                         Frequency = request.Frequency ?? 0, // 0=Monthly, 1=Weekly
+                         IsActive = true,
+                         LastRunDate = DateTime.UtcNow // İlk işlem zaten bugün oluşturuldu, tekrar bugün çalışmasın
+                     };
+                     _context.RecurringTransactions.Add(recurring);
+                     await _context.SaveChangesAsync();
+                     _logger.LogInformation("Otomatik tekrarlayan işlem kuralı oluşturuldu.");
+                }
+                // --- BİTİŞ ---
+
                 // Frontend için tam veri dön
                 var newTransactionWithIncludes = await _transactionRepo.GetTransactionByIdAsync(
                     transaction.TransactionId, 

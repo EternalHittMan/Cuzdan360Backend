@@ -60,7 +60,6 @@ namespace Cuzdan360Backend.Controllers
                 var netWorthDataPoints = new List<ChartDataPointDto>();
 
                 // Mock Rates - In a real app, inject a CurrencyService
-                // 1 USD = 34.0 TRY, 1 EUR = 36.0 TRY, 1 Gram Gold = 2800 TRY, 1 BTC = 3000000 TRY
                 decimal GetRate(string code) => code switch
                 {
                     "USD" => 34.0m,
@@ -84,16 +83,31 @@ namespace Cuzdan360Backend.Controllers
                     });
                 }
                 
-                // Add Cash Balance
-                if (userBalance > 0)
+                // Calculate Cash Flow (Dynamic Balance - ALL TIME)
+                var allTimeStats = await _context.Transactions
+                    .Where(t => t.UserId == userId)
+                    .GroupBy(t => t.TransactionType)
+                    .Select(g => new { Type = g.Key, Total = g.Sum(t => t.Amount) })
+                    .ToListAsync();
+
+                decimal totalIncome = allTimeStats.FirstOrDefault(x => x.Type == TransactionType.Income)?.Total ?? 0;
+                decimal totalExpense = allTimeStats.FirstOrDefault(x => x.Type == TransactionType.Expense)?.Total ?? 0;
+                decimal cashBalance = totalIncome - totalExpense;
+
+                // Add Cash Balance if positive
+                if (cashBalance > 0)
                 {
-                    totalNetWorth += userBalance;
+                    totalNetWorth += cashBalance;
                     netWorthDataPoints.Add(new ChartDataPointDto
                     {
                         Label = "Nakit (TL)",
-                        Value = userBalance,
+                        Value = cashBalance,
                         Percentage = 0
                     });
+                } else if (cashBalance < 0) {
+                     // Maybe show Debt? For now, we only show Assets in Chart.
+                     // Net Worth is reduced by negative cash (debt).
+                     totalNetWorth += cashBalance; 
                 }
 
                 summary.TotalNetWorth = totalNetWorth;

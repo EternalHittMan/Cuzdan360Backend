@@ -36,8 +36,11 @@ namespace Cuzdan360Backend.Models.Finance
         public int TransactionType { get; set; }
 
         // 1-31 representing the day of the month this should run
-        [Range(1, 31)]
+        // 1-31 representing the day of the month this should run
+        // OR 0-6 representing DayOfWeek if Frequency is Weekly
         public int DayOfMonth { get; set; }
+
+        public int Frequency { get; set; } // 0=Monthly, 1=Weekly
 
         public DateTime? LastRunDate { get; set; }
 

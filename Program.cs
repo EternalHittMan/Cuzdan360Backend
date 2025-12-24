@@ -22,9 +22,12 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 {
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
     Console.WriteLine($"[DEBUG] ConnectionString Server: {connectionString?.Split(';').FirstOrDefault(s => s.StartsWith("Server="))}");
+    
+    // Use a fixed version to avoid connection attempts during startup/configuration
+    // This fixes the race condition where app starts before DB is ready.
     options.UseMySql(
         connectionString,
-        ServerVersion.AutoDetect(connectionString),
+        new MySqlServerVersion(new Version(8, 0, 44)), 
         mySqlOptions => mySqlOptions.EnableRetryOnFailure()
     );
 });
@@ -117,17 +120,56 @@ builder.Services.AddAuthorization(options =>
 
 var app = builder.Build();
 
-try
-{
-    using var scope = app.Services.CreateScope();
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    dbContext.Database.Migrate();
-}
-catch (Exception ex)
-{
-    var logger = app.Services.GetRequiredService<ILogger<Program>>();
-    logger.LogError(ex, "An error occurred while migrating the database.");
-}
+
+    // --- DATABASE MIGRATION START ---
+    // Skip migration if running from EF Tool (to avoid connection loop during design time)
+    if (Environment.GetEnvironmentVariable("EF_TOOL") != "true")
+    {
+        try
+        {
+            using var scope = app.Services.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        
+        // Retry policy for database connection/migration
+        int maxRetries = 10;
+        int delaySeconds = 2;
+        
+        for (int i = 0; i < maxRetries; i++)
+        {
+            try
+            {
+                if (dbContext.Database.CanConnect())
+                {
+                     dbContext.Database.Migrate();
+                     break; // Success
+                }
+                else
+                {
+                    throw new Exception("Cannot connect to database.");
+                }
+            }
+            catch (Exception ex)
+            {
+                var logger = app.Services.GetRequiredService<ILogger<Program>>();
+                if (i == maxRetries - 1)
+                {
+                    logger.LogCritical(ex, "Database migration failed after {MaxRetries} attempts.", maxRetries);
+                    throw; // Re-throw on last attempt
+                }
+                logger.LogWarning("Database migration attempt {Attempt} failed. Retrying in {Delay}s... Error: {Message}", i + 1, delaySeconds, ex.Message);
+                System.Threading.Thread.Sleep(delaySeconds * 1000);
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        // Log critical failure
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogCritical(ex, "Startup aborted due to database migration failure.");
+        throw; 
+    }
+    }
+    // --- DATABASE MIGRATION END ---
 
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 

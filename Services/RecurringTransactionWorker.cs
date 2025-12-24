@@ -48,9 +48,41 @@ namespace Cuzdan360Backend.Services
                 var todayDate = DateTime.UtcNow.Date;
 
                 // Bugün çalışması gereken ve henüz bugün çalışmamış aktif kurallar
-                var policies = await context.RecurringTransactions
-                    .Where(r => r.IsActive && r.DayOfMonth == today)
+                var allPolicies = await context.RecurringTransactions
+                    .Where(r => r.IsActive)
                     .ToListAsync(stoppingToken);
+
+                var policies = new List<RecurringTransaction>();
+                
+                foreach(var p in allPolicies)
+                {
+                    bool shouldRun = false;
+                    
+                    if (p.Frequency == 0) // Monthly
+                    {
+                        shouldRun = (p.DayOfMonth == today);
+                    }
+                    else if (p.Frequency == 1) // Weekly
+                    {
+                        // Haftalık mantık: DayOfMonth 1 (Pzt) - 7 (Pazar) arası varsayıyoruz. C# DayOfWeek Pazar=0, Pzt=1...
+                        // Frontend'den 1=Pzt, 7=Pazar yollayacağız.
+                        // C# DayOfWeek dönüşümü: Sunday=0. Bizim 7 Pazar.
+                        int currentDayOfWeek = (int)DateTime.UtcNow.DayOfWeek; 
+                        if (currentDayOfWeek == 0) currentDayOfWeek = 7; // Pazar'ı 7 yapalım.
+
+                        shouldRun = (p.DayOfMonth == currentDayOfWeek);
+                    }
+                    
+                    if (shouldRun)
+                    {
+                        // Son çalışma tarihini kontrol et
+                        if (p.LastRunDate.HasValue && p.LastRunDate.Value.Date == todayDate)
+                        {
+                            continue; // Bu gün zaten çalışmış
+                        }
+                        policies.Add(p);
+                    }
+                }
 
                 foreach (var policy in policies)
                 {

@@ -19,6 +19,13 @@ namespace Cuzdan360Backend.Models.DTOs
         [Required]
         public TransactionType TransactionType { get; set; } // Income = 0, Expense = 1
 
+        [Range(1, 31, ErrorMessage = "Gün 1 ile 31 arasında olmalıdır.")]
+        public int? DayOfMonth { get; set; }
+
+        public bool IsRecurring { get; set; }
+        public int? RecurringDay { get; set; }
+        public int? Frequency { get; set; } // 0=Monthly, 1=Weekly
+
         [Required]
         [Range(0.01, double.MaxValue, ErrorMessage = "Tutar 0'dan büyük olmalıdır")]
         public decimal Amount { get; set; }
