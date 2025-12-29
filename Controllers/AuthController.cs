@@ -39,10 +39,21 @@ public class AuthController : ControllerBase
     
                 if (loginResponse.RequiresOtp)
                 {
-                    return Ok(new { requiresOtp = true, message = "OTP kodunuz e-posta adresinize gönderildi." });
+                    return Ok(new { 
+                        requiresOtp = true, 
+                        message = "Lütfen Authenticator uygulamanızdaki kodu girin.",
+                        isEmailVerified = loginResponse.IsEmailVerified,
+                        email = loginResponse.Email
+                    });
                 }
     
-                return Ok(new { token = loginResponse.Token });
+                return Ok(new { 
+                    token = loginResponse.Token,
+                    refreshToken = loginResponse.RefreshToken, // 👈
+                    requiresOtp = loginResponse.RequiresOtp,
+                    isEmailVerified = loginResponse.IsEmailVerified,
+                    email = loginResponse.Email
+                });
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -70,7 +81,7 @@ public class AuthController : ControllerBase
                 return Ok(new { requiresOtp = true, message = "OTP kodunuz e-posta adresinize gönderildi." });
             }
 
-            return Ok(new { token = loginResponse.Token });
+            return Ok(new { token = loginResponse.Token, refreshToken = loginResponse.RefreshToken }); // 👈
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -169,14 +180,33 @@ public class AuthController : ControllerBase
         }
     }
 
+    [HttpPost("resend-verification-email")]
+    public async Task<IActionResult> ResendVerificationEmail(ResendVerificationEmailRequest request)
+    {
+        try
+        {
+            await _authService.ResendVerificationEmailAsync(request);
+            return Ok(new { message = "Doğrulama email'i tekrar gönderildi." });
+        }
+        catch (CustomException ex)
+        {
+            _logger.LogWarning(ex, "Resend verification email failed");
+            return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
+    }
+
     [HttpPost("verify-mfa")]
     [EnableRateLimiting("OTPLimit")]
     public async Task<IActionResult> VerifyMfa(VerifyMfaRequest request)
     {
         try
         {
-            var token = await _authService.VerifyMfaAsync(request);
-            return Ok(new { token });
+            var loginResponse = await _authService.VerifyMfaAsync(request);
+            return Ok(new { 
+                token = loginResponse.Token,
+                refreshToken = loginResponse.RefreshToken, // 👈
+                email = loginResponse.Email
+            });
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -215,13 +245,91 @@ public class AuthController : ControllerBase
     {
         try
         {
-            var token = await _authService.RefreshTokenAsync(request);
-            return Ok(new { token });
+            var response = await _authService.RefreshTokenAsync(request);
+            return Ok(new { 
+                token = response.Token,
+                refreshToken = response.RefreshToken // 👈
+            });
         }
         catch (UnauthorizedAccessException ex)
         {
             _logger.LogWarning(ex, "RefreshToken failed");
             return Unauthorized(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("google-login")]
+    public async Task<IActionResult> GoogleLogin(GoogleLoginRequest request)
+    {
+        try
+        {
+            var loginResponse = await _authService.LoginWithGoogleAsync(request);
+            return Ok(new { token = loginResponse.Token, refreshToken = loginResponse.RefreshToken }); // 👈
+        }
+        catch (CustomException ex)
+        {
+            _logger.LogWarning(ex, "Google login failed");
+            return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Google login failed");
+            return StatusCode(500, new { message = "Google ile giriş başarısız" });
+        }
+    }
+
+
+    // === TOTP ENDPOINTS ===
+
+    [Authorize]
+    [HttpPost("totp/enable")]
+    public async Task<IActionResult> EnableTotp()
+    {
+        try
+        {
+            var result = await _authService.EnableTotpAsync();
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "TOTP enable failed");
+            return StatusCode(500, new { message = ex.Message });
+        }
+    }
+
+    [Authorize]
+    [HttpPost("totp/verify-and-activate")]
+    public async Task<IActionResult> VerifyAndActivateTotp(VerifyTotpRequest request)
+    {
+        try
+        {
+            await _authService.VerifyAndActivateTotpAsync(request);
+            return Ok(new { message = "2FA başarıyla etkinleştirildi." });
+        }
+        catch (CustomException ex)
+        {
+            return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "TOTP activation failed");
+            return StatusCode(500, new { message = "İşlem başarısız." });
+        }
+    }
+
+    [Authorize]
+    [HttpPost("totp/disable")]
+    public async Task<IActionResult> DisableTotp()
+    {
+         try
+        {
+            await _authService.DisableTotpAsync();
+            return Ok(new { message = "2FA devre dışı bırakıldı." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "TOTP disable failed");
+            return StatusCode(500, new { message = "İşlem başarısız." });
         }
     }
 }

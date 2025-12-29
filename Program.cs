@@ -65,6 +65,7 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ITransactionRepository, TransactionRepository>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<ITotpService, TotpService>();
 
 // --- YENİ EKLENDİ ---
 // NewsService'i IHttpClientFactory (HTTP istekleri için) ile birlikte kaydet

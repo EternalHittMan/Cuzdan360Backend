@@ -19,5 +19,8 @@ namespace Cuzdan360Backend.Models.DTOs
         string Time,
         string? ImageUrl, 
         string Url
-    );
+    )
+    {
+        public DateTime ParsedDate { get; init; }
+    }
 }

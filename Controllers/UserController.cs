@@ -43,9 +43,12 @@ public class UserController : ControllerBase
             // Sadece gerekli bilgileri döndür
             return Ok(new
             {
+                user.Id,
                 user.Username,
                 user.Email,
-                user.Balance
+                user.Balance,
+                user.PendingEmail,
+                user.IsOtpEnabled
             });
         }
         catch (Exception ex)

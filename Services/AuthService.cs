@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using Google.Apis.Auth;
 
 namespace Cuzdan360Backend.Services;
 
@@ -23,6 +24,7 @@ public class AuthService
     private readonly ILogger<AuthService> _logger;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IConfiguration _configuration;
+    private readonly ITotpService _totpService;
 
     public AuthService(
         IUserRepository userRepository,
@@ -31,7 +33,8 @@ public class AuthService
         ILogger<AuthService> logger,
         IMemoryCache cache,
         IHttpContextAccessor httpContextAccessor,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ITotpService totpService)
     {
         _userRepository = userRepository;
         _tokenService = tokenService;
@@ -40,6 +43,7 @@ public class AuthService
         _cache = cache;
         _httpContextAccessor = httpContextAccessor;
         _configuration = configuration;
+        _totpService = totpService;
     }
 
     private string GetUserIdFromToken()
@@ -68,7 +72,14 @@ public class AuthService
 
         if (!user.IsEmailVerified)
         {
-            throw new CustomException("Lütfen önce email adresinizi doğrulayın.", 401);
+            _logger.LogWarning("Email doğrulanmamış. Email: {Email}", request.Email);
+            return new LoginResponse
+            {
+                Token = null,
+                RequiresOtp = false,
+                IsEmailVerified = false,
+                Email = user.Email
+            };
         }
 
         // OTP ayarlarını kontrol et
@@ -91,29 +102,19 @@ public class AuthService
                 break;
         }
 
-        if (requiresOtp)
+        // TOTP kontrolü (Email OTP kaldırıldı)
+        if (user.TotpSecret != null)
         {
-            // OTP gönder ve beklet
-            var otpBytes = new byte[4];
-            RandomNumberGenerator.Fill(otpBytes); // 👈 Kriptografik RNG
-            var otp = BitConverter.ToString(otpBytes).Replace("-", "").Substring(0, 6);
-
-            user.MfaCode = otp;
-            user.MfaCodeExpiry = DateTime.UtcNow.AddMinutes(5);
-            await _userRepository.UpdateUserAsync(user);
-
-            await _emailService.SendEmailAsync(user.Email, "OTP Kodu", $"Giriş için OTP kodunuz: {otp}");
-
-            _logger.LogInformation("OTP gönderildi. mail: {Email}", request.Email);
-
             return new LoginResponse
             {
                 Token = null,
-                RequiresOtp = true
+                RequiresOtp = true,
+                IsEmailVerified = user.IsEmailVerified,
+                Email = user.Email
             };
         }
 
-        // OTP gerekmiyorsa direkt token oluştur
+        // OTP gerekmiyorsa (veya TOTP kurulu değilse) direkt token oluştur
         _logger.LogInformation("Kullanıcı başarıyla giriş yaptı. Kullanıcı: {Username}", request.Email);
 
         var token = _tokenService.GenerateToken(user.Id.ToString(), user.Email, user.Permission.ToString());
@@ -128,7 +129,10 @@ public class AuthService
         return new LoginResponse
         {
             Token = token,
-            RequiresOtp = false
+            RefreshToken = refreshToken, // 👈
+            RequiresOtp = false,
+            IsEmailVerified = user.IsEmailVerified,
+            Email = user.Email
         };
     }
 
@@ -207,6 +211,7 @@ public class AuthService
         return new LoginResponse
         {
             Token = token,
+            RefreshToken = refreshToken, // 👈
             RequiresOtp = false
         };
     }
@@ -243,13 +248,16 @@ public class AuthService
 
         var emailVerificationToken = Guid.NewGuid().ToString();
         user.EmailVerificationToken = emailVerificationToken;
-        user.EmailVerificationTokenExpiry = DateTime.UtcNow.AddDays(1);
+        user.EmailVerificationTokenExpiry = DateTime.UtcNow.AddMinutes(3);
 
         await _userRepository.UpdateUserAsync(user);
 
-        var verificationLink = $"http://localhost:5000/verify-email?token={emailVerificationToken}";
-        await _emailService.SendEmailAsync(user.Email, "E-posta Doğrulama",
-            $"E-posta adresinizi doğrulamak için bu linki kullanın: {verificationLink}");
+        var verificationLink = $"{_configuration["AppSettings:FrontendUrl"]}/email-confirmation?token={emailVerificationToken}";
+        await _emailService.SendEmailAsync(
+            user.Email,
+            "E-posta Doğrulama",
+            EmailTemplates.EmailVerification(verificationLink, user.Username)
+        );
 
         _logger.LogInformation("Yeni kullanıcı başarıyla kaydedildi. Kullanıcı: {Username}", request.Username);
     }
@@ -272,9 +280,12 @@ public class AuthService
 
         await _userRepository.UpdateUserAsync(user);
 
-        var resetLink = $"https://yourapp.com/reset-password?token={resetToken}";
-        await _emailService.SendEmailAsync(user.Email, "Şifre Sıfırlama",
-            $"Şifrenizi sıfırlamak için bu linki kullanın: {resetLink}");
+        var resetLink = $"{_configuration["AppSettings:FrontendUrl"]}/forgot-password?token={resetToken}";
+        await _emailService.SendEmailAsync(
+            user.Email,
+            "Şifre Sıfırlama",
+            EmailTemplates.PasswordReset(resetLink, user.Username)
+        );
 
         _logger.LogInformation("Şifre sıfırlama linki gönderildi. E-posta: {Email}", request.Email);
     }
@@ -405,17 +416,21 @@ public class AuthService
             var token = Guid.NewGuid().ToString();
             user.PendingEmail = request.Email;
             user.EmailVerificationToken = token;
-            user.EmailVerificationTokenExpiry = DateTime.UtcNow.AddHours(24);
+            user.EmailVerificationTokenExpiry = DateTime.UtcNow.AddMinutes(3); // 3 dakika
 
+            var verificationLink = $"{_configuration["AppSettings:FrontendUrl"]}/email-confirmation?token={token}";
+            
             await Task.WhenAll(
                 _emailService.SendEmailAsync(
                     request.Email,
-                    "Email Doğrulama",
-                    $"Doğrulama linki: https://yourapp.com/verify-email?token={token}"),
+                    "E-posta Doğrulama",
+                    EmailTemplates.EmailVerification(verificationLink, user.Username)
+                ),
                 _emailService.SendEmailAsync(
                     user.Email,
-                    "Email Değişikliği Bildirimi",
-                    "Email değişikliği talebi alındı. İşlemi siz yapmadıysanız bize ulaşın.")
+                    "E-posta Değişikliği Bildirimi",
+                    EmailTemplates.EmailChangeNotification(user.Username, request.Email)
+                )
             );
         }
 
@@ -432,7 +447,7 @@ public class AuthService
         await _userRepository.UpdateUserAsync(user);
     }
 
-    public async Task<string> RefreshTokenAsync(RefreshTokenRequest request)
+    public async Task<LoginResponse> RefreshTokenAsync(RefreshTokenRequest request) // 👈 Dönüş tipi değişti
     {
         _logger.LogInformation("Refresh token işlemi başlatıldı. Refresh Token: {RefreshToken}", request.RefreshToken);
 
@@ -455,18 +470,33 @@ public class AuthService
 
         _logger.LogInformation("Yeni token başarıyla oluşturuldu. Kullanıcı ID: {UserId}", user.Id);
 
-        return token;
+        return new LoginResponse // 👈 String yerine LoginResponse
+        { 
+            Token = token, 
+            RefreshToken = newRefreshToken 
+        };
     }
 
-    public async Task<string> VerifyMfaAsync(VerifyMfaRequest request)
+    public async Task<LoginResponse> VerifyMfaAsync(VerifyMfaRequest request) // 👈 Dönüş tipi değişti
     {
         _logger.LogInformation("MFA doğrulama işlemi başlatıldı. E-posta: {Email}", request.Email);
 
-        var user = await _userRepository.GetUserByMfaCodeAsync(request.Email, request.Otp);
-        if (user == null || user.MfaCodeExpiry < DateTime.UtcNow)
+        var user = await _userRepository.GetUserByEmailAsync(request.Email);
+        if (user == null)
         {
-            _logger.LogWarning("Geçersiz veya süresi dolmuş OTP. E-posta: {Email}", request.Email);
-            throw new UnauthorizedAccessException("Geçersiz veya süresi dolmuş OTP.");
+             throw new UnauthorizedAccessException("Kullanıcı bulunamadı.");
+        }
+
+        // TOTP kontrolü
+        if (user.TotpSecret == null)
+        {
+             throw new UnauthorizedAccessException("2FA kurulu değil.");
+        }
+
+        if (!_totpService.ValidateCode(user.TotpSecret, request.Otp))
+        {
+            _logger.LogWarning("Geçersiz TOTP kodu. E-posta: {Email}", request.Email);
+            throw new UnauthorizedAccessException("Geçersiz kod.");
         }
 
         // OTP doğrulandı, yeni token oluştur
@@ -475,16 +505,22 @@ public class AuthService
         // Refresh token oluştur ve kullanıcıya kaydet
         var refreshToken = _tokenService.GenerateRefreshToken();
         user.RefreshToken = refreshToken;
-        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
-        user.MfaCode = null;
-        user.MfaCodeExpiry = null;
+        user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(_configuration.GetValue<int>("Jwt:RefreshTokenExpireDays"));
+        // Email OTP alanlarını temizlemeye gerek yok artık kullanılmıyor
         user.LastLoginDate = DateTime.UtcNow;
 
         await _userRepository.UpdateUserAsync(user);
 
         _logger.LogInformation("MFA başarıyla doğrulandı. Kullanıcı ID: {UserId}", user.Id);
 
-        return token;
+        return new LoginResponse
+        {
+             Token = token,
+             RefreshToken = refreshToken,
+             RequiresOtp = false,
+             IsEmailVerified = user.IsEmailVerified,
+             Email = user.Email
+        };
     }
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request)
@@ -521,14 +557,204 @@ public class AuthService
         user.IsEmailVerified = true;
         user.EmailVerificationToken = null;
         user.EmailVerificationTokenExpiry = null;
-        user.Email = user.PendingEmail;
-        user.PendingEmail = null;
+        
+        // PendingEmail varsa (email değişikliği durumu), Email'i güncelle
+        if (!string.IsNullOrEmpty(user.PendingEmail))
+        {
+            user.Email = user.PendingEmail;
+            user.PendingEmail = null;
+        }
 
         await _userRepository.UpdateUserAsync(user);
 
         // E-posta gönder
-        await _emailService.SendEmailAsync(user.Email, "E-posta Doğrulama", "E-posta adresiniz başarıyla doğrulandı.");
+        await _emailService.SendEmailAsync(
+            user.Email,
+            "E-posta Doğrulandı",
+            EmailTemplates.EmailVerified(user.Username)
+        );
 
         _logger.LogInformation("E-posta başarıyla doğrulandı. Kullanıcı ID: {UserId}", user.Id);
+    }
+
+    public async Task ResendVerificationEmailAsync(ResendVerificationEmailRequest request)
+    {
+        _logger.LogInformation("Email doğrulama tekrar gönderme işlemi başlatıldı. Email: {Email}", request.Email);
+
+        var user = await _userRepository.GetUserByEmailAsync(request.Email);
+        if (user == null)
+        {
+            _logger.LogWarning("Kullanıcı bulunamadı. Email: {Email}", request.Email);
+            throw new CustomException("Kullanıcı bulunamadı", 404);
+        }
+
+        if (user.IsEmailVerified)
+        {
+            _logger.LogWarning("Email zaten doğrulanmış. Email: {Email}", request.Email);
+            throw new CustomException("Email zaten doğrulanmış", 400);
+        }
+
+        // Yeni token oluştur
+        var emailVerificationToken = Guid.NewGuid().ToString();
+        user.EmailVerificationToken = emailVerificationToken;
+        user.EmailVerificationTokenExpiry = DateTime.UtcNow.AddMinutes(3);
+
+        await _userRepository.UpdateUserAsync(user);
+
+        var verificationLink = $"{_configuration["AppSettings:FrontendUrl"]}/email-confirmation?token={emailVerificationToken}";
+        await _emailService.SendEmailAsync(
+            user.Email,
+            "E-posta Doğrulama",
+            EmailTemplates.EmailVerification(verificationLink, user.Username)
+        );
+
+        _logger.LogInformation("Doğrulama email'i tekrar gönderildi. Email: {Email}", request.Email);
+    }
+
+    public async Task<LoginResponse> LoginWithGoogleAsync(GoogleLoginRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("Google ile giriş işlemi başlatıldı.");
+
+            // Google ID token'ı doğrula
+            var settings = new GoogleJsonWebSignature.ValidationSettings
+            {
+                Audience = new[] { _configuration["Google:ClientId"] }
+            };
+
+            var payload = await GoogleJsonWebSignature.ValidateAsync(request.IdToken, settings);
+
+            _logger.LogInformation("Google token doğrulandı. Email: {Email}", payload.Email);
+
+            // Email ile kullanıcıyı ara
+            var user = await _userRepository.GetUserByEmailAsync(payload.Email);
+
+            if (user == null)
+            {
+                // Yeni kullanıcı oluştur
+                var username = payload.Email.Split('@')[0] + "_" + Guid.NewGuid().ToString().Substring(0, 4);
+                
+                user = new User
+                {
+                    Username = username,
+                    Email = payload.Email,
+                    IsEmailVerified = true,
+                    CreatedAt = DateTime.UtcNow,
+                    PasswordHash = string.Empty, // Google ile giriş yapan kullanıcılar için şifre yok
+                    LastPasswordChangeDate = DateTime.UtcNow
+                };
+                
+                await _userRepository.AddUserAsync(user);
+
+                _logger.LogInformation("Yeni Google kullanıcısı oluşturuldu. Email: {Email}, Username: {Username}", payload.Email, username);
+            }
+
+            // JWT token oluştur ve döndür
+            var token = _tokenService.GenerateToken(user.Id.ToString(), user.Email, user.Permission.ToString());
+
+            // Refresh token oluştur
+            var refreshToken = _tokenService.GenerateRefreshToken();
+            user.RefreshToken = refreshToken;
+            user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(7);
+            user.LastLoginDate = DateTime.UtcNow;
+
+            await _userRepository.UpdateUserAsync(user);
+
+            _logger.LogInformation("Google ile giriş başarılı. Email: {Email}", payload.Email);
+
+            return new LoginResponse
+            {
+                Token = token,
+                RefreshToken = refreshToken, // 👈
+                RequiresOtp = false
+            };
+        }
+        catch (Google.Apis.Auth.InvalidJwtException ex)
+        {
+            _logger.LogWarning(ex, "Geçersiz Google token");
+            throw new CustomException("Geçersiz Google token", 401);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Google ile giriş sırasında hata oluştu");
+            throw new CustomException("Google ile giriş başarısız", 500);
+        }
+    }
+
+    // === TOTP YENİ METODLAR ===
+
+    public async Task<TotpSetupResponse> EnableTotpAsync()
+    {
+        var userId = GetUserIdFromToken();
+        var user = await _userRepository.GetUserByIdAsync(Convert.ToInt32(userId));
+
+        if (user == null)
+            throw new UnauthorizedAccessException("Kullanıcı bulunamadı.");
+
+        var secret = _totpService.GenerateSecret();
+        var qrCodeUri = _totpService.GenerateQrCodeUri(user.Email, secret);
+        var qrCodeBytes = _totpService.GenerateQrCodeImage(qrCodeUri);
+        var qrCodeBase64 = Convert.ToBase64String(qrCodeBytes);
+
+        // Secret'ı geçici olarak cache'te sakla (10 dakika)
+        // Kullanıcı doğrulayana kadar DB'ye kaydetme veya 'Pending' bir alanda tut.
+        // Cache kullanmak stateless backend için daha temiz (redis vs varsayarsak, burada in-memory)
+        var cacheKey = $"pending_totp_{userId}";
+        _cache.Set(cacheKey, secret, TimeSpan.FromMinutes(10));
+
+        return new TotpSetupResponse
+        {
+            Secret = secret,
+            QrCodeImage = $"data:image/png;base64,{qrCodeBase64}"
+        };
+    }
+
+    public async Task VerifyAndActivateTotpAsync(VerifyTotpRequest request)
+    {
+        var userId = GetUserIdFromToken();
+        
+        // Önce cache'ten pending secret'ı al
+        var cacheKey = $"pending_totp_{userId}";
+        if (!_cache.TryGetValue<string>(cacheKey, out var secret))
+        {
+             throw new CustomException("Kurulum süresi dolmuş veya geçersiz işlem. Lütfen tekrar kurulum yapın.", 400);
+        }
+
+        // Kodu doğrula
+        var isValid = _totpService.ValidateCode(secret, request.Code);
+        if (!isValid)
+        {
+            throw new CustomException("Geçersiz kod.", 400);
+        }
+
+        // Valid -> Kullanıcıya kaydet
+        var user = await _userRepository.GetUserByIdAsync(Convert.ToInt32(userId));
+        if (user == null) throw new UnauthorizedAccessException("Kullanıcı bulunamadı.");
+
+        user.TotpSecret = secret;
+        user.IsOtpEnabled = true;
+
+        await _userRepository.UpdateUserAsync(user);
+
+        // Cache'i temizle
+        _cache.Remove(cacheKey);
+
+        _logger.LogInformation("TOTP başarıyla kuruldu. Kullanıcı ID: {UserId}", userId);
+    }
+
+    public async Task DisableTotpAsync()
+    {
+        var userId = GetUserIdFromToken();
+        var user = await _userRepository.GetUserByIdAsync(Convert.ToInt32(userId));
+        
+        if (user == null) throw new UnauthorizedAccessException("Kullanıcı bulunamadı.");
+
+        user.TotpSecret = null;
+        user.IsOtpEnabled = false;
+
+        await _userRepository.UpdateUserAsync(user);
+
+        _logger.LogInformation("TOTP devre dışı bırakıldı. Kullanıcı ID: {UserId}", userId);
     }
 }

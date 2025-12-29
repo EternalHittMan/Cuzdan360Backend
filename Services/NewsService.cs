@@ -24,14 +24,20 @@ namespace Cuzdan360Backend.Services
         // Alternatifler: 
         // "https://www.haberturk.com/rss/ekonomi.xml"
         // "https://www.ntv.com.tr/ekonomi.rss"
-        private const string RssFeedUrl = "https://www.bloomberght.com/rss"; 
+        // Feed Listesi
+        private readonly List<string> _feedUrls = new()
+        {
+            "https://www.bloomberght.com/rss",
+            "https://www.haberturk.com/rss/ekonomi.xml",
+            "https://www.ntv.com.tr/ekonomi.rss"
+        }; 
 
         public NewsService(HttpClient httpClient, ILogger<NewsService> logger, IMemoryCache cache)
         {
             _httpClient = httpClient;
             _logger = logger;
             _cache = cache;
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Cuzdan360Backend/1.0");
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
         }
 
         public async Task<List<NewsArticleDto>> GetNewsAsync()
@@ -43,53 +49,107 @@ namespace Cuzdan360Backend.Services
                 return cachedNews;
             }
             
-            _logger.LogInformation("Cache boş, RSS feed'inden taze haberler çekiliyor: {RssFeedUrl}", RssFeedUrl);
+            var allNews = new List<NewsArticleDto>();
+            var tasks = _feedUrls.Select(FetchFeedAsync).ToList();
 
+            var results = await Task.WhenAll(tasks);
+
+            foreach (var result in results)
+            {
+                allNews.AddRange(result);
+            }
+
+            // Tarihe göre yeniden sırala (en güncel en üstte)
+            allNews = allNews.OrderByDescending(x => x.ParsedDate).Take(10).ToList();
+
+            if (allNews.Count == 0)
+            {
+                 // Eğer hiç haber yoksa hata döndürülür
+                 return new List<NewsArticleDto> { new("hata", "Haberler yüklenemedi.", "Sistem", "", null, "#") };
+            }
+
+            // Cache'e kaydet
+            var cacheEntryOptions = new MemoryCacheEntryOptions()
+                .SetAbsoluteExpiration(TimeSpan.FromMinutes(15));
+            _cache.Set(CacheKey, allNews, cacheEntryOptions);
+
+            return allNews;
+        }
+
+        private async Task<List<NewsArticleDto>> FetchFeedAsync(string url)
+        {
             try
             {
-                // 2. RSS feed'ini çek
-                using var stream = await _httpClient.GetStreamAsync(RssFeedUrl);
-                using var xmlReader = XmlReader.Create(stream, new XmlReaderSettings { Async = true });
-                var feed = SyndicationFeed.Load(xmlReader);
-
-                if (feed == null)
+                _logger.LogInformation("RSS çekiliyor: {Url}", url);
+                // HTML içeriği yerine XML bekliyoruz, ama bazı sunucular User-Agent'a göre farklı davranabilir.
+                // Yahoo bazen gzip döner, HttpClient otomatik handle eder genellikle.
+                
+                using var response = await _httpClient.GetAsync(url);
+                if (!response.IsSuccessStatusCode)
                 {
-                    throw new InvalidOperationException("RSS feed'i yüklenemedi.");
+                    _logger.LogWarning("RSS isteği başarısız: {Url} - {StatusCode}", url, response.StatusCode);
+                    return new List<NewsArticleDto>();
                 }
 
-                var trCulture = new CultureInfo("tr-TR");
+                // Stream'i string olarak oku ve temizle
+                using var reader = new StreamReader(stream);
+                var xmlContent = await reader.ReadToEndAsync();
                 
-                // 3. RSS verisini DTO'ya dönüştür
-                var newsFeed = feed.Items
-                    .Take(5) // Sadece ilk 5 haberi al
-                    .Select(item => new NewsArticleDto(
-                        item.Id ?? Guid.NewGuid().ToString(),
-                        item.Title.Text,
-                        feed.Title.Text, // "Dünya Gazetesi - Ekonomi"
-                        item.PublishDate.ToString("g", trCulture), // "28.10.2025 10:30"
-                        ExtractImageUrl(item), // Resim URL'sini ayıkla
-                        item.Links.FirstOrDefault()?.Uri.ToString() ?? "#"
-                    ))
-                    .ToList();
+                // BOM ve whitespace temizliği (Basit Trim yeterli olmayabilir, string başında görünmez karakterler olabilir)
+                xmlContent = xmlContent.Trim().Replace((char)0xFEFF, ' '); // BOM check
 
-                // 4. Gelen veriyi cache'e kaydet (15 dakika)
-                var cacheEntryOptions = new MemoryCacheEntryOptions()
-                    .SetAbsoluteExpiration(TimeSpan.FromMinutes(15));
-                _cache.Set(CacheKey, newsFeed, cacheEntryOptions);
+                // XmlReader ayarları
+                var settings = new XmlReaderSettings 
+                { 
+                    Async = true, 
+                    DtdProcessing = DtdProcessing.Ignore, 
+                    CheckCharacters = false,
+                    IgnoreWhitespace = true,
+                    IgnoreComments = true
+                };
                 
-                return newsFeed;
+                using var stringReader = new StringReader(xmlContent);
+                using var xmlReader = XmlReader.Create(stringReader, settings);
+                
+                var feed = SyndicationFeed.Load(xmlReader);
+                if (feed == null) return new List<NewsArticleDto>();
+
+                var trCulture = new CultureInfo("tr-TR");
+                var sourceName = feed.Title?.Text ?? "Haber Kaynağı";
+                
+                // Bloomberg için özel isimlendirme
+                if (url.Contains("bloomberg")) sourceName = "Bloomberg HT";
+                if (url.Contains("haberturk")) sourceName = "Habertürk Ekonomi";
+                if (url.Contains("ntv")) sourceName = "NTV Ekonomi";
+
+                return feed.Items
+                    .Take(5)
+                    .Select(item => {
+                         // Tarih parse etme
+                         string dateStr = item.PublishDate.ToString("g", trCulture);
+                         
+                         return new NewsArticleDto(
+                            item.Id ?? Guid.NewGuid().ToString(),
+                            item.Title.Text,
+                            sourceName,
+                            dateStr,
+                            ExtractImageUrl(item, url), // URL'e göre özelleştirilmiş resim çekme
+                            item.Links.FirstOrDefault()?.Uri.ToString() ?? "#"
+                        ) { ParsedDate = item.PublishDate.DateTime }; // Sıralama için ekstra property (DTO'da yoksa eklemeliyiz veya sıralamayı burada yapmalıyız)
+                    })
+                    .ToList();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "RSS verisi çekilirken hata oluştu.");
-                return new List<NewsArticleDto> { new("hata", "Haber servisinde hata oluştu, lütfen daha sonra tekrar deneyin.", "Sistem", "", null, "#") };
+                 _logger.LogError(ex, "Feed hatası: {Url}", url);
+                 return new List<NewsArticleDto>();
             }
         }
 
         /// <summary>
         /// RSS 'item' içinden resim (enclosure) veya içerikten <img> tag'i ayıklar.
         /// </summary>
-        private string? ExtractImageUrl(SyndicationItem item)
+        private string? ExtractImageUrl(SyndicationItem item, string feedUrl)
         {
             try
             {
@@ -108,6 +168,22 @@ namespace Cuzdan360Backend.Services
                 if (match.Success && match.Groups.Count > 1)
                 {
                     return match.Groups[1].Value; // Yakalanan URL
+                }
+
+                // Yahoo Finance için özel kontrol (media:content)
+                // SyndicationFeed standart olarak media taglerini ElementExtension içine atar
+                if (feedUrl.Contains("yahoo"))
+                {
+                    var mediaContent = item.ElementExtensions
+                        .FirstOrDefault(e => e.OuterName == "content" && e.OuterNamespace == "http://search.yahoo.com/mrss/");
+                    
+                    if (mediaContent != null)
+                    {
+                         // XElement parse
+                         var element = mediaContent.GetObject<System.Xml.Linq.XElement>();
+                         var urlAttribute = element.Attribute("url");
+                         if (urlAttribute != null) return urlAttribute.Value;
+                    }
                 }
             }
             catch (Exception ex)

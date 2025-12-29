@@ -33,6 +33,7 @@ public class User
     public DateTime? LastLoginDate { get; set; }
     public DateTime? LastProfileUpdateDate { get; set; }
     public bool IsOtpEnabled { get; set; }
+    public string? TotpSecret { get; set; } // TOTP secret key (Base32 encoded)
 
     // === 3. EKLENDİ ===
     // Navigation Property (One-to-Many)
