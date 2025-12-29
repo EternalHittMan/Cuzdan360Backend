@@ -358,7 +358,12 @@ namespace Cuzdan360Backend.Controllers
             try
             {
                 var categories = await _context.Categories
-                    .Select(c => new { c.CategoryId, c.Name })
+                    .Select(c => new 
+                    { 
+                        c.CategoryId, 
+                        c.Name,
+                        TransactionType = c.CategoryId < 10 ? 0 : 1 // 0=Income, 1=Expense
+                    })
                     .OrderBy(c => c.Name)
                     .ToListAsync();
                 

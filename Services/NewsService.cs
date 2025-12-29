@@ -92,6 +92,7 @@ namespace Cuzdan360Backend.Services
                 }
 
                 // Stream'i string olarak oku ve temizle
+                using var stream = await response.Content.ReadAsStreamAsync();
                 using var reader = new StreamReader(stream);
                 var xmlContent = await reader.ReadToEndAsync();
                 
