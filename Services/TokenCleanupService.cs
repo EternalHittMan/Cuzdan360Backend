@@ -13,23 +13,38 @@ public class TokenCleanupService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        while (!stoppingToken.IsCancellationRequested)
+        try 
         {
-            using (var scope = _serviceProvider.CreateScope())
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var expiredTokens = dbContext.Users.Where(u => u.RefreshTokenExpiry < DateTime.UtcNow).ToList();
-
-                foreach (var user in expiredTokens)
+                try
                 {
-                    user.RefreshToken = null;
-                    user.RefreshTokenExpiry = null;
+                    using (var scope = _serviceProvider.CreateScope())
+                    {
+                        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var expiredTokens = dbContext.Users.Where(u => u.RefreshTokenExpiry < DateTime.UtcNow).ToList();
+
+                        foreach (var user in expiredTokens)
+                        {
+                            user.RefreshToken = null;
+                            user.RefreshTokenExpiry = null;
+                        }
+
+                        await dbContext.SaveChangesAsync(stoppingToken);
+                    }
+
+                    await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
                 }
-
-                await dbContext.SaveChangesAsync(stoppingToken);
+                catch (OperationCanceledException) { break; }
+                catch (Exception)
+                {
+                    // Log error but continue
+                }
             }
-
-            await Task.Delay(TimeSpan.FromHours(1), stoppingToken); // Her saatte bir çalışır
+        }
+        catch (OperationCanceledException)
+        {
+            // Graceful shutdown
         }
     }
 }

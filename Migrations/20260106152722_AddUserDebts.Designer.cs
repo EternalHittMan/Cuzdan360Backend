@@ -4,6 +4,7 @@ using Cuzdan360Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Cuzdan360Backend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260106152722_AddUserDebts")]
+    partial class AddUserDebts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -72,30 +75,6 @@ namespace Cuzdan360Backend.Migrations
                             AssetTypeId = 5,
                             Code = "BTC",
                             Name = "Bitcoin"
-                        },
-                        new
-                        {
-                            AssetTypeId = 6,
-                            Code = "STK",
-                            Name = "Hisse Senedi"
-                        },
-                        new
-                        {
-                            AssetTypeId = 7,
-                            Code = "FON",
-                            Name = "Yatırım Fonu"
-                        },
-                        new
-                        {
-                            AssetTypeId = 8,
-                            Code = "EMT",
-                            Name = "Emtia"
-                        },
-                        new
-                        {
-                            AssetTypeId = 9,
-                            Code = "BOND",
-                            Name = "Tahvil/Bonolar"
                         });
                 });
 
@@ -334,23 +313,8 @@ namespace Cuzdan360Backend.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("decimal(18,8)");
 
-                    b.Property<string>("AssetCategory")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)");
-
                     b.Property<int>("AssetTypeId")
                         .HasColumnType("int");
-
-                    b.Property<decimal>("AverageCost")
-                        .HasColumnType("decimal(18,8)");
-
-                    b.Property<DateTime>("PurchaseDate")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("Symbol")
-                        .HasMaxLength(20)
-                        .HasColumnType("varchar(20)");
 
                     b.Property<int>("UserId")
                         .HasColumnType("int");
@@ -381,31 +345,15 @@ namespace Cuzdan360Backend.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
-                    b.Property<string>("CurrencySymbol")
-                        .HasMaxLength(10)
-                        .HasColumnType("varchar(10)");
-
                     b.Property<DateTime?>("DueDate")
                         .HasColumnType("datetime(6)");
-
-                    b.Property<decimal>("InitialAmount")
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal>("InterestRate")
-                        .HasColumnType("decimal(5,2)");
 
                     b.Property<string>("LenderName")
                         .HasColumnType("longtext");
 
-                    b.Property<int>("RemainingInstallments")
-                        .HasColumnType("int");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasColumnType("longtext");
-
-                    b.Property<int>("TotalInstallments")
-                        .HasColumnType("int");
 
                     b.Property<int>("UserId")
                         .HasColumnType("int");

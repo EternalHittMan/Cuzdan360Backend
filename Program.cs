@@ -53,7 +53,7 @@ builder.Services.AddCors(options =>
 builder.Services.Configure<JwtConfiguration>(builder.Configuration.GetSection("Jwt"));
 builder.Services.AddTransient<JwtConfiguration>();
 builder.Services.AddTransient<TokenService>();
-builder.Services.AddHostedService<TokenCleanupService>();
+// builder.Services.AddHostedService<TokenCleanupService>();
 
 builder.Services.AddEndpointsApiExplorer();
 // builder.Services.AddSwaggerGen(); // Duplicate removed
@@ -80,8 +80,12 @@ builder.Services.AddScoped<GeminiReceiptService>();
 builder.Services.AddHttpClient<AdviceService>();
 builder.Services.AddScoped<AdviceService>();
 
+// Market Data Service
+builder.Services.AddHttpClient<MarketDataService>();
+
 // Background Worker
-builder.Services.AddHostedService<RecurringTransactionWorker>();
+// builder.Services.AddHostedService<TokenCleanupService>();
+// builder.Services.AddHostedService<RecurringTransactionWorker>();
 // --- BİTİŞ ---
 
 

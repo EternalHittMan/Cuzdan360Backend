@@ -4,6 +4,7 @@ using Cuzdan360Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Cuzdan360Backend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260106155840_AddPortfolioProFeatures")]
+    partial class AddPortfolioProFeatures
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -72,30 +75,6 @@ namespace Cuzdan360Backend.Migrations
                             AssetTypeId = 5,
                             Code = "BTC",
                             Name = "Bitcoin"
-                        },
-                        new
-                        {
-                            AssetTypeId = 6,
-                            Code = "STK",
-                            Name = "Hisse Senedi"
-                        },
-                        new
-                        {
-                            AssetTypeId = 7,
-                            Code = "FON",
-                            Name = "Yatırım Fonu"
-                        },
-                        new
-                        {
-                            AssetTypeId = 8,
-                            Code = "EMT",
-                            Name = "Emtia"
-                        },
-                        new
-                        {
-                            AssetTypeId = 9,
-                            Code = "BOND",
-                            Name = "Tahvil/Bonolar"
                         });
                 });
 

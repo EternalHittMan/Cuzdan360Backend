@@ -19,23 +19,26 @@ namespace Cuzdan360Backend.Services
         {
             _logger.LogInformation("Recurring Transaction Worker başlatıldı.");
 
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
-                try
+                while (!stoppingToken.IsCancellationRequested)
                 {
-                    await ProcessRecurringTransactionsAsync(stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Recurring Transaction Worker döngüsünde hata oluştu.");
-                }
+                    try
+                    {
+                        await ProcessRecurringTransactionsAsync(stoppingToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Recurring Transaction Worker döngüsünde hata oluştu.");
+                    }
 
-                // Her 24 saatte bir kontrol et (ya da her saat başı kontrol edip saati kontrol edebiliriz).
-                // Basit olması için: Bir sonraki günün başlangıcına kadar veya sabit bir süre bekle.
-                // Şimdilik 1 saatte bir kontrol edip, eğer bugün çalışmadıysa çalıştır mantığı kuralım.
-                // Veya user logic: "DayOfMonth equals today's day".
-                
-                await Task.Delay(TimeSpan.FromHours(12), stoppingToken); // Günde 2 kere kontrol etsin yeterli.
+                    // Her 12 saatte bir kontrol
+                    await Task.Delay(TimeSpan.FromHours(12), stoppingToken);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Recurring Transaction Worker durduruluyor...");
             }
         }
 

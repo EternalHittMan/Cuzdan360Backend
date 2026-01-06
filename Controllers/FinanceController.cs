@@ -24,7 +24,8 @@ namespace Cuzdan360Backend.Controllers
     // Not: NewsArticleDto, Models/DTOs/NewsDtos.cs dosyasından geliyor.
 
     public record AssetPortfolioItemDto(string AssetName, decimal Quantity, decimal CurrentValueTRY);
-    public record PortfolioSummaryDto(List<AssetPortfolioItemDto> Assets, decimal TotalNetWorthTRY);
+
+    public record PortfolioSummaryDto(List<AssetPortfolioItemDto> Assets, decimal TotalNetWorthTRY, decimal TotalAssetsTRY, decimal TotalDebtsTRY);
 
 
     /// <summary>
@@ -256,7 +257,50 @@ private static readonly Dictionary<string, string> TickerMap = new()
                     totalNetWorth += currentValue;
                 }
 
-                return Ok(new PortfolioSummaryDto(portfolioItems, totalNetWorth));
+                // --- DEBTS CALCULATION ---
+                var userDebts = await _context.UserDebts
+                    .Include(d => d.AssetType)
+                    .Where(d => d.UserId == userId)
+                    .ToListAsync();
+                
+                decimal totalDebts = 0;
+                foreach (var debt in userDebts)
+                {
+                    if (debt.AssetType == null) continue;
+                    decimal debtValue = 0;
+                    if (debt.AssetType.Code == "TRY")
+                    {
+                        debtValue = debt.Amount;
+                    }
+                    else
+                    {
+                         string searchKey = "";
+                        if (debt.AssetType.Code == "USD") searchKey = "USD/TRY";
+                        else if (debt.AssetType.Code == "EUR") searchKey = "EUR/TRY";
+                        else if (debt.AssetType.Code == "XAUTRY") searchKey = "Gram Altın (TL)";
+                        else if (debt.AssetType.Code == "BTC") searchKey = "Bitcoin (BTC/USD)";
+
+                        var rateItem = rates.FirstOrDefault(r => r.Pair == searchKey);
+                        if (rateItem != null)
+                        {
+                            if (debt.AssetType.Code == "BTC")
+                            {
+                                var usdTry = rates.FirstOrDefault(r => r.Pair == "USD/TRY")?.Rate ?? 30;
+                                debtValue = debt.Amount * (decimal)(rateItem.Rate * usdTry);
+                            }
+                            else
+                            {
+                                debtValue = debt.Amount * (decimal)rateItem.Rate;
+                            }
+                        }
+                    }
+                    totalDebts += debtValue;
+                }
+
+                decimal totalAssets = totalNetWorth; // Existing totalNetWorth variable is actually TotalAssets calculation
+                decimal finalNetWorth = totalAssets - totalDebts;
+
+                return Ok(new PortfolioSummaryDto(portfolioItems, finalNetWorth, totalAssets, totalDebts));
             }
             catch (Exception ex)
             {

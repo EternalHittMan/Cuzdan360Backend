@@ -20,5 +20,16 @@ namespace Cuzdan360Backend.Models.Finance
         // The quantity of the asset (e.g. 10.5 Grams of Gold, 100 USD)
         [Column(TypeName = "decimal(18,8)")]
         public decimal Amount { get; set; }
+
+        [Column(TypeName = "decimal(18,8)")]
+        public decimal AverageCost { get; set; } // Birim maliyet
+
+        [StringLength(20)]
+        public string? Symbol { get; set; } // e.g. "THYAO.IS", "AAPL"
+
+        [StringLength(50)]
+        public string AssetCategory { get; set; } = "Other"; // Stock, Crypto, Forex, Gold, Other
+        
+        public DateTime PurchaseDate { get; set; } = DateTime.UtcNow;
     }
 }

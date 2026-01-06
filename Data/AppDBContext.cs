@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     public DbSet<Transaction> Transactions { get; set; }
     public DbSet<RecurringTransaction> RecurringTransactions { get; set; }
     public DbSet<UserAsset> UserAssets { get; set; }
+    public DbSet<UserDebt> UserDebts { get; set; }
 
     // === EKLENTİ SONU ===
 
@@ -48,7 +49,11 @@ public class AppDbContext : DbContext
             new AssetType { AssetTypeId = 2, Name = "ABD Doları", Code = "USD" },
             new AssetType { AssetTypeId = 3, Name = "Euro", Code = "EUR" },
             new AssetType { AssetTypeId = 4, Name = "Gram Altın", Code = "XAUTRY" },
-            new AssetType { AssetTypeId = 5, Name = "Bitcoin", Code = "BTC" }
+            new AssetType { AssetTypeId = 5, Name = "Bitcoin", Code = "BTC" },
+            new AssetType { AssetTypeId = 6, Name = "Hisse Senedi", Code = "STK" },
+            new AssetType { AssetTypeId = 7, Name = "Yatırım Fonu", Code = "FON" },
+            new AssetType { AssetTypeId = 8, Name = "Emtia", Code = "EMT" },
+            new AssetType { AssetTypeId = 9, Name = "Tahvil/Bonolar", Code = "BOND" }
         );
 
         // Kaynaklar (Source) için hazır veriler

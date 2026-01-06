@@ -3,6 +3,8 @@ namespace Cuzdan360Backend.Models.DTOs
     public class DashboardSummaryDto
     {
         public decimal TotalNetWorth { get; set; }
+        public decimal TotalAssets { get; set; }
+        public decimal TotalDebts { get; set; }
         public decimal MonthlyIncome { get; set; }
         public decimal MonthlyExpense { get; set; }
         public List<ChartDataPointDto> NetWorthDistribution { get; set; } // For Pie Chart
