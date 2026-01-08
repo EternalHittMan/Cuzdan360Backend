@@ -46,63 +46,125 @@ namespace Cuzdan360Backend.Controllers
                     .Where(a => a.UserId == userId)
                     .ToListAsync();
 
-                // 1. Collect symbols for live data with Mapping
-                var symbolMap = new Dictionary<string, string>(); // InternalSymbol -> YahooTicker
-                
-                foreach (var asset in assets)
-                {
-                    if (string.IsNullOrEmpty(asset.Symbol)) continue;
+                // 1. Calculate Cash Balance First
+                var allTransactions = await _context.Transactions
+                    .Where(t => t.UserId == userId)
+                    .Select(t => new { t.TransactionType, t.Amount })
+                    .ToListAsync();
 
-                    string yahooTicker = asset.Symbol.ToUpper();
-                    
-                    // Manual Mapping for known types
-                    // Assuming asset.Symbol holds values like "USD", "EUR", "BTC" set by the form
-                    switch (yahooTicker)
-                    {
-                        case "USD": yahooTicker = "USDTRY=X"; break;
-                        case "EUR": yahooTicker = "EURTRY=X"; break;
-                        case "GBP": yahooTicker = "GBPTRY=X"; break;
-                        case "XAUTRY": yahooTicker = "XAUTRY=X"; break; // Gram Altın
-                        case "BTC": yahooTicker = "BTC-USD"; break; 
-                        case "ETH": yahooTicker = "ETH-USD"; break;
-                    }
-                    
-                    symbolMap[asset.Symbol] = yahooTicker;
+                decimal totalIncome = allTransactions.Where(t => t.TransactionType == TransactionType.Income).Sum(t => t.Amount);
+                decimal totalExpense = allTransactions.Where(t => t.TransactionType == TransactionType.Expense).Sum(t => t.Amount);
+                decimal cashBalance = totalIncome - totalExpense;
+
+                // 2. Collect symbols for live data with Unified Mapping
+                var tickerMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "USD", "USDTRY=X" },
+                    { "EUR", "EURTRY=X" },
+                    { "GBP", "GBPTRY=X" },
+                    { "GA", "XAUTRY=X" },
+                    { "XAU", "XAUTRY=X" },
+                    { "XAUTRY", "XAUTRY=X" },
+                    { "BTC", "BTC-USD" },
+                    { "ETH", "ETH-USD" },
+                    { "USDT", "USDT-USD" },
+                    { "BNB", "BNB-USD" },
+                    { "SOL", "SOL-USD" },
+                    { "XRP", "XRP-USD" },
+                    { "AVAX", "AVAX-USD" }
+                };
+                
+                var querySymbols = new HashSet<string>();
+
+                // Helper to resolve ticker (matches ReportsController)
+                string ResolveTicker(string code)
+                {
+                     if (string.IsNullOrEmpty(code)) return null;
+                     if (tickerMap.TryGetValue(code, out var ticker)) return ticker;
+                     if (code.Contains(".") || code.EndsWith("=X")) return code;
+                     return null;
                 }
 
-                var uniqueTickers = symbolMap.Values.Distinct().ToList();
+                foreach (var asset in assets)
+                {
+                    if (!string.IsNullOrEmpty(asset.Symbol)) querySymbols.Add(asset.Symbol);
+                    
+                    var ticker = ResolveTicker(asset.AssetType?.Code);
+                    if (ticker != null) querySymbols.Add(ticker);
+                }
 
-                // 2. Fetch Live Prices
-                var marketData = await _marketDataService.GetCurrentPricesAsync(uniqueTickers);
+                // Ensure base pairs
+                querySymbols.Add("USDTRY=X");
+                querySymbols.Add("EURTRY=X");
+                querySymbols.Add("XAUTRY=X");
 
-                // 3. Map to DTOs
+                // 3. Fetch Live Prices
+                var livePrices = await _marketDataService.GetCurrentPricesAsync(querySymbols.ToList());
+
+                // Rate Helper (Unified)
+                decimal GetRate(string currencyCode)
+                {
+                     if(string.IsNullOrEmpty(currencyCode) || currencyCode == "TRY") return 1m;
+                     
+                     string targetKey = ResolveTicker(currencyCode) ?? currencyCode;
+                     decimal price = 0;
+                     string priceCurrency = "TRY";
+
+                     if(livePrices.TryGetValue(targetKey, out var data))
+                     {
+                         price = data.Price;
+                         priceCurrency = data.Currency;
+                     }
+                     else
+                     {
+                         // Fallbacks
+                         if(currencyCode == "USD") return 36.0m;
+                         if(currencyCode == "EUR") return 38.0m;
+                         if(currencyCode == "GA") return 3000m;
+                         if(currencyCode == "BTC") price = 95000m;
+                         else if(currencyCode == "ETH") price = 2700m;
+                         else return 1m;
+                         
+                         priceCurrency = "USD";
+                     }
+
+                     if (priceCurrency == "TRY") return price;
+                     if (priceCurrency == "USD") return price * (livePrices.TryGetValue("USDTRY=X", out var usd) ? usd.Price : 36.0m);
+                     if (priceCurrency == "EUR") return price * (livePrices.TryGetValue("EURTRY=X", out var eur) ? eur.Price : 38.0m);
+
+                     return price;
+                }
+
+                // 4. Map Assets to DTOs
                 var result = assets.Select(asset =>
                 {
-                    decimal currentPrice = asset.AverageCost; // Default to cost if no price
-                    decimal changePercent = 0;
-                    string currency = "TRY";
+                    decimal price = 1;
+                    string code = asset.AssetType?.Code ?? "TRY";
+                    string lookupKey = !string.IsNullOrEmpty(asset.Symbol) ? asset.Symbol : asset.AssetType?.Code;
+                    string ticker = ResolveTicker(lookupKey) ?? lookupKey;
 
-                    // Resolve Yahoo Ticker
-                    if (!string.IsNullOrEmpty(asset.Symbol) && symbolMap.TryGetValue(asset.Symbol, out var yahooTicker))
-                    {
-                        if (marketData.TryGetValue(yahooTicker, out var data))
-                        {
-                            currentPrice = data.Price;
-                            changePercent = data.ChangePercent;
-                            currency = data.Currency;
-                        }
-                    }
-                    else if (asset.AssetType != null && asset.AssetType.Code != "TRY") // Existing currency logic backup?
-                    {
-                        // TODO: Use existing currency cache logic if strict currency asset
-                    }
+                    if(!string.IsNullOrEmpty(ticker) && livePrices.ContainsKey(ticker))
+                         price = livePrices[ticker].Price;
+                    else
+                         price = GetRate(code);
 
-                    // Calculations
-                    decimal totalValue = asset.Amount * currentPrice;
-                    decimal profitLoss = (currentPrice - asset.AverageCost) * asset.Amount;
-                    decimal profitLossPercent = asset.AverageCost != 0 
-                        ? ((currentPrice - asset.AverageCost) / asset.AverageCost) * 100 
-                        : 0;
+                    // Normalize to TRY if the price found was in foreign currency (re-use GetRate logic partly or simplify)
+                    // The simplest way to be consistent is just call GetRate on the AssetType Code if no specific Symbol overrides
+                    
+                    // Improved Logic:
+                    decimal exchangeRate = 1;
+                    if (!string.IsNullOrEmpty(asset.Symbol) && livePrices.TryGetValue(asset.Symbol, out var symbolData))
+                    {
+                        // If symbol exists (e.g. AAPL), convert its currency to TRY
+                        if (symbolData.Currency == "USD") exchangeRate = (livePrices.TryGetValue("USDTRY=X", out var u) ? u.Price : 36m);
+                        else if (symbolData.Currency == "EUR") exchangeRate = (livePrices.TryGetValue("EURTRY=X", out var e) ? e.Price : 38m);
+                        price = symbolData.Price * exchangeRate;
+                    }
+                    else
+                    {
+                        // Generic Asset
+                        price = GetRate(code);
+                    }
 
                     return new AssetResponseDto
                     {
@@ -115,13 +177,35 @@ namespace Cuzdan360Backend.Controllers
                         AverageCost = asset.AverageCost,
                         Symbol = asset.Symbol,
                         AssetCategory = asset.AssetCategory,
-                        CurrentPrice = currentPrice,
-                        TotalValue = totalValue,
-                        ProfitLoss = profitLoss,
-                        ProfitLossPercent = profitLossPercent,
-                        Currency = currency
+                        CurrentPrice = price, // Now in TRY
+                        TotalValue = asset.Amount * price,
+                        ProfitLoss = (price - asset.AverageCost) * asset.Amount,
+                        ProfitLossPercent = asset.AverageCost != 0 ? ((price - asset.AverageCost) / asset.AverageCost) * 100 : 0,
+                        Currency = "TRY"
                     };
                 }).ToList();
+
+                // 5. Inject Cash Balance as a "Virtual" Asset
+                if (cashBalance > 0)
+                {
+                    result.Insert(0, new AssetResponseDto
+                    {
+                        Id = 0, // Virtual
+                        UserId = userId,
+                        AssetTypeId = 0,
+                        AssetTypeName = "Nakit Varlıklar",
+                        AssetTypeCode = "TRY",
+                        Amount = cashBalance,
+                        AverageCost = 1,
+                        Symbol = "CASH",
+                        AssetCategory = "Nakit",
+                        CurrentPrice = 1,
+                        TotalValue = cashBalance,
+                        ProfitLoss = 0,
+                        ProfitLossPercent = 0,
+                        Currency = "TRY"
+                    });
+                }
 
                 return Ok(result);
             }

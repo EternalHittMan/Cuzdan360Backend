@@ -79,64 +79,99 @@ namespace Cuzdan360Backend.Controllers
 
                 // 2. LIVE ASSET VALUATION
                 // 2. LIVE ASSET VALUATION & CURRENCY MAP
-                var symbolMap = new Dictionary<string, string>();
-                
+                // Unified Ticker Map for known types
+                var tickerMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "USD", "USDTRY=X" },
+                    { "EUR", "EURTRY=X" },
+                    { "GBP", "GBPTRY=X" },
+                    { "GA", "XAUTRY=X" },
+                    { "XAU", "XAUTRY=X" },
+                    { "XAUTRY", "XAUTRY=X" },
+                    { "BTC", "BTC-USD" },
+                    { "ETH", "ETH-USD" },
+                    { "USDT", "USDT-USD" },
+                    { "BNB", "BNB-USD" },
+                    { "SOL", "SOL-USD" },
+                    { "XRP", "XRP-USD" },
+                    { "AVAX", "AVAX-USD" }
+                };
+
+                var querySymbols = new HashSet<string>();
+
+                // Helper to resolve ticker
+                string ResolveTicker(string code)
+                {
+                    if (string.IsNullOrEmpty(code)) return null;
+                    if (tickerMap.TryGetValue(code, out var ticker)) return ticker;
+                    // If it looks like a ticker (contains dot or dash), use it
+                    if (code.Contains(".") || code.Contains("-") || code.EndsWith("=X")) return code;
+                    return null;
+                }
+
                 // Collect symbols from Assets
                 foreach (var asset in assets)
                 {
-                    // If asset has a specific symbol (e.g. THYAO.IS), use it
-                    if (!string.IsNullOrEmpty(asset.Symbol))
-                         symbolMap[asset.Symbol] = asset.Symbol;
-                    // Also track the general currency type
-                    if (asset.AssetType != null && !string.IsNullOrEmpty(asset.AssetType.Code))
-                         symbolMap[asset.AssetType.Code] = asset.AssetType.Code;
+                    if (!string.IsNullOrEmpty(asset.Symbol)) querySymbols.Add(asset.Symbol);
+                    
+                    var ticker = ResolveTicker(asset.AssetType?.Code);
+                    if (ticker != null) querySymbols.Add(ticker);
                 }
+
                 // Collect symbols from Transactions (All Time)
                 foreach(var stat in allTimeStats) 
-                    if(!string.IsNullOrEmpty(stat.Currency) && stat.Currency != "TRY") symbolMap[stat.Currency] = stat.Currency;
-
-                // Ensure base pairs are present
-                if(!symbolMap.ContainsKey("USD")) symbolMap["USD"] = "USDTRY=X";
-                if(!symbolMap.ContainsKey("EUR")) symbolMap["EUR"] = "EURTRY=X";
-                if(!symbolMap.ContainsKey("GA")) symbolMap["GA"] = "XAUTRY=X"; // Gram Gold
-
-                // Fix map for API (e.g. USD -> USDTRY=X)
-                var querySymbols = new List<string>();
-                foreach(var kv in symbolMap)
                 {
-                     string s = kv.Key;
-                     if(s == "USD") s = "USDTRY=X";
-                     else if(s == "EUR") s = "EURTRY=X";
-                     else if(s == "GA" || s == "XAU" || s == "XAUTRY") s = "XAUTRY=X";
-                     else if(s == "BTC") s = "BTC-USD";
-                     
-                     if(!querySymbols.Contains(s)) querySymbols.Add(s);
+                    if(!string.IsNullOrEmpty(stat.Currency) && stat.Currency != "TRY")
+                    {
+                        var ticker = ResolveTicker(stat.Currency);
+                        if (ticker != null) querySymbols.Add(ticker);
+                    }
                 }
 
-                var livePrices = await _marketDataService.GetCurrentPricesAsync(querySymbols);
+                // Ensure base pairs are present for cross-conversion
+                querySymbols.Add("USDTRY=X");
+                querySymbols.Add("EURTRY=X");
+                querySymbols.Add("XAUTRY=X");
+
+                var livePrices = await _marketDataService.GetCurrentPricesAsync(querySymbols.ToList());
 
                 // Rate Helper
                 decimal GetRate(string currencyCode)
                 {
                      if(string.IsNullOrEmpty(currencyCode) || currencyCode == "TRY") return 1m;
                      
-                     string targetKey = currencyCode;
-                     if(currencyCode == "USD") targetKey = "USDTRY=X";
-                     else if(currencyCode == "EUR") targetKey = "EURTRY=X";
-                     else if(currencyCode == "GA" || currencyCode == "XAU" || currencyCode == "XAUTRY") targetKey = "XAUTRY=X";
-                     else if(currencyCode == "BTC") targetKey = "BTC-USD";
+                     // 1. Try Direct Ticker Lookup
+                     string targetKey = ResolveTicker(currencyCode) ?? currencyCode;
+
+                     // 2. Get Price
+                     decimal price = 0;
+                     string priceCurrency = "TRY";
 
                      if(livePrices.TryGetValue(targetKey, out var data))
                      {
-                         // Handle Cross Rates (e.g. BTC is in USD)
-                         if(data.Currency == "USD" && targetKey != "USDTRY=X") 
-                             return data.Price * (livePrices.TryGetValue("USDTRY=X", out var usd) ? usd.Price : 34m);
-                         return data.Price;
+                         price = data.Price;
+                         priceCurrency = data.Currency;
                      }
-                     // Fallback
-                     if(currencyCode == "USD") return 34m;
-                     if(currencyCode == "EUR") return 36m;
-                     return 1m;
+                     else
+                     {
+                         // Fallback logic if API fails
+                         if(currencyCode == "USD") return 36.0m;
+                         if(currencyCode == "EUR") return 38.0m;
+                         if(currencyCode == "GBP") return 45.0m;
+                         if(currencyCode == "GA" || currencyCode == "XAU") return 3000m;
+                         if(currencyCode == "BTC") price = 95000m; // Fallback USD price
+                         else if(currencyCode == "ETH") price = 2700m; 
+                         else return 1m; // Unknown
+                         
+                         priceCurrency = "USD"; // Crypto fallbacks are usually USD
+                     }
+
+                     // 3. Convert to TRY if needed
+                     if (priceCurrency == "TRY") return price;
+                     if (priceCurrency == "USD") return price * (livePrices.TryGetValue("USDTRY=X", out var usd) ? usd.Price : 36.0m);
+                     if (priceCurrency == "EUR") return price * (livePrices.TryGetValue("EURTRY=X", out var eur) ? eur.Price : 38.0m);
+
+                     return price;
                 }
 
                 // Calculate Net Worth Cash Balance (Normalized)
@@ -182,6 +217,14 @@ namespace Cuzdan360Backend.Controllers
 
                 // 3. DEBT CALCULATION
                 decimal totalDebtValue = debts.Sum(d => d.Amount);
+
+                // --- FIX: Add Cash Balance to Assets and Net Worth ---
+                if (cashBalance > 0)
+                {
+                    totalAssetsValue += cashBalance;
+                    if (!assetAllocations.ContainsKey("Nakit Varlıklar")) assetAllocations["Nakit Varlıklar"] = 0;
+                    assetAllocations["Nakit Varlıklar"] += cashBalance;
+                }
 
                 // 4. CASHFLOW ANALYSIS (Normalized)
                 // Normalize Transactions List
@@ -375,7 +418,7 @@ namespace Cuzdan360Backend.Controllers
 
                 // B. Wealth Projection
                 var projection = new List<WealthProjectionDto>();
-                decimal runningNetWorth = totalAssetsValue - totalDebtValue + cashBalance; // Include Cash!
+                decimal runningNetWorth = totalAssetsValue - totalDebtValue; // FIX: totalAssetsValue includes cashBalance now, so don't double count if we did += cashBalance
                 
                 projection.Add(new WealthProjectionDto { 
                     Date = "Şimdi", 
@@ -398,7 +441,7 @@ namespace Cuzdan360Backend.Controllers
                 // 8. BUILD REPORT
                 var report = new FinancialReportDto
                 {
-                    TotalAssets = totalAssetsValue, // Only use explicit assets
+                    TotalAssets = totalAssetsValue, // Now Includes Cash
                     TotalDebts = totalDebtValue,
                     TotalNetWorth = totalAssetsValue - totalDebtValue, // Match Dashboard logic
                     MonthlyBurnRate = monthlyBurnRate,
