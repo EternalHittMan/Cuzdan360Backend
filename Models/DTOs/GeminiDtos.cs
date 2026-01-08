@@ -8,7 +8,7 @@ namespace Cuzdan360Backend.Models.DTOs
     {
         public string Title { get; set; }
         public decimal Amount { get; set; }
-        public DateTime Date { get; set; }
+        public DateTime TransactionDate { get; set; }
         public int TransactionType { get; set; } // 0=Income, 1=Expense
 
         // AI Suggested Fields

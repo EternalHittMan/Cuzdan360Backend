@@ -49,7 +49,21 @@ namespace Cuzdan360Backend.Services
                 var assetTypeList = string.Join(", ", assetTypes.Select(a => $"{a.AssetTypeId}:{a.Name}"));
 
                 var prompt = $@"Analyze this receipt image. Return ONLY a JSON Array. 
-Extract: Title, Amount, Date (in YYYY-MM-DD format), TransactionType (0=Income, 1=Expense).
+Extract: Title, Amount, TransactionDate (in YYYY-MM-DD format), TransactionType (0=Income, 1=Expense).
+
+IMPORTANT Rules for TransactionDate:
+- The receipt might be in Turkish.
+- Convert month names like 'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık' to their month numbers (01-12).
+- Example: '15 Kasım 2024' -> '2024-11-15'
+- Example: '20 Aralık 2024' -> '2024-12-20'
+- Provide the final TransactionDate strictly in YYYY-MM-DD format.
+
+IMPORTANT Rules for Amount:
+- Return 'Amount' as a Number, not a string. 
+- Use a dot (.) for the decimal separator. DO NOT use commas for thousands.
+- Example: 1250.50 (Correct)
+- Example: 1.250,50 (Wrong)
+
 Also, select the best matching ID from the provided lists for:
 - CategoryId (from: {categoryList})
 - SourceId (from: {sourceList})
@@ -111,6 +125,26 @@ Do not include markdown formatting like ```json.";
                         };
                         
                         var transactions = JsonSerializer.Deserialize<List<ExtractedTransactionDto>>(text, options);
+                        
+                        // NULL KONTROLÜ VE VARSAYILAN ATAMA
+                        if (transactions != null)
+                        {
+                            foreach (var t in transactions)
+                            {
+                                // Eğer kategori bulunamadıysa 'Diğer' (Genellikle ID 22 veya listedeki son/ilk)
+                                if (t.CategoryId == null || t.CategoryId == 0)
+                                    t.CategoryId = categories.Any() ? categories.FirstOrDefault(c => c.Name.Contains("Diğer"))?.CategoryId ?? categories.First().CategoryId : 1;
+
+                                // Kaynak bulunamadıysa 'Nakit' (Genellikle ID 1)
+                                if (t.SourceId == null || t.SourceId == 0)
+                                    t.SourceId = sources.Any() ? sources.FirstOrDefault(s => s.SourceName.Contains("Nakit"))?.SourceId ?? sources.First().SourceId : 1;
+
+                                // Varlık tipi bulunamadıysa 'TRY' (Genellikle ID 1)
+                                if (t.AssetTypeId == null || t.AssetTypeId == 0)
+                                    t.AssetTypeId = assetTypes.Any() ? assetTypes.FirstOrDefault(a => a.Code == "TRY")?.AssetTypeId ?? assetTypes.First().AssetTypeId : 1;
+                            }
+                        }
+
                         return transactions ?? new List<ExtractedTransactionDto>();
                     }
                 }
